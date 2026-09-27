@@ -95,6 +95,7 @@ namespace SmartTrains.Dispatch
         private NetworkSystem m_Network;
         private SimulationSystem m_Simulation;
         private UI.TrainsUISystem m_TrainsUI;
+        private Game.UI.NameSystem m_Names;
         private EntityQuery m_TrainQuery;
 
         private Dispatcher m_Dispatcher;
@@ -116,6 +117,7 @@ namespace SmartTrains.Dispatch
             m_Network = World.GetOrCreateSystemManaged<NetworkSystem>();
             m_Simulation = World.GetOrCreateSystemManaged<SimulationSystem>();
             m_TrainsUI = World.GetOrCreateSystemManaged<UI.TrainsUISystem>();
+            m_Names = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
             m_TrainQuery = GetEntityQuery(TrainReader.QueryDesc());
         }
 
@@ -410,6 +412,16 @@ namespace SmartTrains.Dispatch
             if (m_LoggedCircles.Count > 200)
                 m_LoggedCircles.Clear();
             Mod.Log.Info($"Waiting circle {string.Join(" -> ", names)} -> {names[0]}; the dispatcher lets #{released.Index} go.");
+            // The trains and their track, for finding out how the circle came
+            // about; only while the dispatcher holds trains, since circles
+            // that only its plan contains change nothing in the game.
+            if (!Active)
+                return;
+            var trains = new List<Entity>();
+            foreach (long key in circle)
+                trains.Add(EntityKey.ToEntity(key));
+            uint frame = m_Simulation.frameIndex;
+            TrainDiagnosis.WriteCircle(EntityManager, m_Names, t => m_TrainsUI.StandingMinutes(t, frame), trains, m_States);
         }
 
         /// <summary>The dispatcher's view of one train; null for a train not on train track.</summary>

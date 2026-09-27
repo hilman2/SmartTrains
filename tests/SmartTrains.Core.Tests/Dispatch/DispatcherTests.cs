@@ -156,6 +156,62 @@ namespace SmartTrains.Core.Tests.Dispatch
             Assert.Equal(2, order.HoldAt);
         }
 
+        // ---- Following trains ----
+
+        [Fact]
+        public void AFollowingTrainIsNeverGrantedTrackBeyondTheTrainAhead()
+        {
+            // One-way section A-B-C of 600 m, then a turnout to D. The leader
+            // stands 550 m into the section, the follower 200 m. The follower
+            // has the higher rank, so it is dispatched first. Granting it the
+            // turnout would hold the leader back for a train that cannot get
+            // past it: a circle the dispatcher itself makes.
+            var b = new TrackBuilder()
+                .Point("A", 0, 0).Point("B", 300, 0).Point("C", 600, 0)
+                .Point("D", 620, 5).Point("E", 620, -5).Point("F", 1020, 5);
+            long p1 = b.Lane("A", "B", twoWay: false);
+            long p2 = b.Lane("B", "C", twoWay: false);
+            long cd = b.Lane("C", "D", LaneKind.Switch, twoWay: false);
+            b.Lane("C", "E", LaneKind.Switch, twoWay: false);
+            long df = b.Lane("D", "F", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput leader = Train(1, 10, M(n, p2, true), M(n, cd, true), M(n, df, true));
+            TrainInput follower = Train(2, 50, M(n, p1, true), M(n, p2, true), M(n, cd, true), M(n, df, true));
+            follower.FrontRemaining = 100f;
+            List<TrainOrder> orders = d.Dispatch(new[] { leader, follower });
+
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
+            TrainOrder second = Order(orders, 2);
+            Assert.Equal(2, second.HoldAt);
+            Assert.Equal(1, second.WaitingFor);
+        }
+
+        [Fact]
+        public void ATrainIsNotHeldBackByTheTrainFollowingIt()
+        {
+            // The same, the other way round: the train ahead has the higher
+            // rank. It must get the turnout, and not wait for the one behind.
+            var b = new TrackBuilder()
+                .Point("A", 0, 0).Point("B", 300, 0).Point("C", 600, 0)
+                .Point("D", 620, 5).Point("F", 1020, 5);
+            long p1 = b.Lane("A", "B", twoWay: false);
+            long p2 = b.Lane("B", "C", twoWay: false);
+            long cd = b.Lane("C", "D", LaneKind.Switch, twoWay: false);
+            long df = b.Lane("D", "F", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput leader = Train(1, 50, M(n, p2, true), M(n, cd, true), M(n, df, true));
+            TrainInput follower = Train(2, 10, M(n, p1, true), M(n, p2, true), M(n, cd, true), M(n, df, true));
+            follower.FrontRemaining = 100f;
+            List<TrainOrder> orders = d.Dispatch(new[] { leader, follower });
+
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
+            Assert.Equal(1, Order(orders, 2).WaitingFor);
+        }
+
         // ---- Two loops joined by single track ----
 
         /// <summary>

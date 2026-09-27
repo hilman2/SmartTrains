@@ -26,9 +26,22 @@ namespace SmartTrains.Monitor
         /// <summary>Navigation lanes listed for each train further along the chain.</summary>
         private const int kLanesChain = 6;
 
+        /// <summary>Writes the trains of a waiting circle the dispatcher has found, each with its track ahead.</summary>
+        /// <param name="standingMinutes">Called as <c>standingMinutes(train)</c>. Returns the in-game minutes the train has stood.</param>
+        public static void WriteCircle(EntityManager em, NameSystem names, System.Func<Entity, float> standingMinutes, List<Entity> circle,
+            IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch)
+        {
+            var text = new StringBuilder($"Trains of the waiting circle, each waiting for the next:");
+            text.AppendLine();
+            foreach (Entity train in circle)
+                Describe(text, em, names, standingMinutes, train, kLanesChain, dispatch);
+            Mod.Log.Info(text.ToString());
+        }
+
+        /// <param name="standingMinutes">Called as <c>standingMinutes(train)</c>. Returns the in-game minutes the train has stood.</param>
         /// <param name="dispatch">The dispatcher's last decision per train.</param>
         /// <param name="dispatcherActive">Whether the dispatcher holds trains, or only plans.</param>
-        public static void Write(EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame,
+        public static void Write(EntityManager em, NameSystem names, System.Func<Entity, float> standingMinutes, Entity train, uint frame,
             IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch, bool dispatcherActive)
         {
             if (!em.Exists(train))
@@ -44,15 +57,15 @@ namespace SmartTrains.Monitor
             });
 
             var text = new StringBuilder();
-            text.Append($"Diagnosis of train #{train.Index}, waiting chain of {chain.Trains.Count} train(s)");
+            text.Append($"Diagnosis of train #{train.Index} at simulation frame {frame}, waiting chain of {chain.Trains.Count} train(s)");
             text.Append(chain.BackToStart ? ", leading back to it (deadlock)." : ".");
             text.Append(dispatcherActive ? " Dispatcher on." : " Dispatcher off, only planning.");
             text.AppendLine();
-            Describe(text, em, names, reader, train, frame, kLanesFirst, dispatch);
+            Describe(text, em, names, standingMinutes, train, kLanesFirst, dispatch);
             foreach (long key in chain.Trains)
             {
                 text.AppendLine("  waits for:");
-                Describe(text, em, names, reader, EntityKey.ToEntity(key), frame, kLanesChain, dispatch);
+                Describe(text, em, names, standingMinutes, EntityKey.ToEntity(key), kLanesChain, dispatch);
             }
             Mod.Log.Info(text.ToString());
         }
@@ -67,7 +80,7 @@ namespace SmartTrains.Monitor
             return other == Entity.Null ? 0 : EntityKey.Of(other);
         }
 
-        private static void Describe(StringBuilder text, EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame, int laneCount,
+        private static void Describe(StringBuilder text, EntityManager em, NameSystem names, System.Func<Entity, float> standingMinutes, Entity train, int laneCount,
             IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch)
         {
             if (!em.Exists(train))
@@ -78,7 +91,7 @@ namespace SmartTrains.Monitor
             string line = em.TryGetComponent(train, out Game.Routes.CurrentRoute route) ? NameText.Of(names, em, route.m_Route) : "no line";
             float3 position = em.TryGetComponent(train, out Game.Objects.Transform transform) ? transform.m_Position : default;
             float speed = em.TryGetComponent(train, out Game.Objects.Moving moving) ? math.length(moving.m_Velocity) : 0f;
-            text.AppendLine($"  #{train.Index} ({line}) at ({position.x:0}, {position.y:0}, {position.z:0}), speed {speed:0.0} m/s, standing {reader.StandingMinutes(train, frame):0} min");
+            text.AppendLine($"  #{train.Index} ({line}) at ({position.x:0}, {position.y:0}, {position.z:0}), speed {speed:0.0} m/s, standing {standingMinutes(train):0} min");
 
             if (em.TryGetComponent(train, out Blocker blocker))
             {
@@ -95,9 +108,9 @@ namespace SmartTrains.Monitor
             if (dispatch.TryGetValue(train, out Dispatch.DispatchState state))
                 text.AppendLine("    " + DescribeDispatch(em, state));
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))
-                text.AppendLine($"    passenger service: {passenger.m_State}, departure frame {passenger.m_DepartureFrame} (now {frame})");
+                text.AppendLine($"    passenger service: {passenger.m_State}, departure frame {passenger.m_DepartureFrame}");
             if (em.TryGetComponent(train, out Game.Vehicles.CargoTransport cargo))
-                text.AppendLine($"    cargo service: {cargo.m_State}, departure frame {cargo.m_DepartureFrame} (now {frame})");
+                text.AppendLine($"    cargo service: {cargo.m_State}, departure frame {cargo.m_DepartureFrame}");
 
             if (em.TryGetComponent(train, out TrainCurrentLane current))
             {

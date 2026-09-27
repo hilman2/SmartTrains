@@ -134,10 +134,45 @@ namespace SmartTrains.Core.Dispatch
         /// <summary>The last lane granted to each train, as it appeared in its route.</summary>
         private readonly Dictionary<long, Move> m_GrantedEnd = new Dictionary<long, Move>();
 
+        /// <summary>Per lane in a section, where in its section the lane starts, in metres along the section's own direction.</summary>
+        private readonly float[] m_LaneOffset;
+
         public Dispatcher(TrackLayout layout)
         {
             m_Layout = layout;
             m_Network = layout.Network;
+            m_LaneOffset = new float[m_Network.Lanes.Count];
+            foreach (Section section in layout.Sections)
+            {
+                float offset = 0f;
+                foreach (Move move in section.Moves)
+                {
+                    m_LaneOffset[move.Lane] = offset;
+                    offset += m_Network.Lanes[move.Lane].Length;
+                }
+            }
+        }
+
+        /// <summary>A train in a section, or granted it.</summary>
+        private sealed class SectionUser
+        {
+            public long Train;
+
+            /// <summary>It runs the section in the section's own direction.</summary>
+            public bool Forward;
+
+            public float Length;
+
+            /// <summary>It is in the section, not only granted it.</summary>
+            public bool Occupies;
+
+            /// <summary>
+            /// How far its front has come through the section, in metres and
+            /// in its own direction; positive infinity if its front has left
+            /// the section and only its rear is still in it, negative infinity
+            /// if it is not in the section.
+            /// </summary>
+            public float Along;
         }
 
         /// <summary>Holders of track during one round.</summary>
@@ -147,8 +182,7 @@ namespace SmartTrains.Core.Dispatch
             public readonly Dictionary<int, long> Lanes = new Dictionary<int, long>();
 
             /// <summary>Per section, the trains in it or granted into it, their direction and length.</summary>
-            public readonly Dictionary<int, List<(long Train, bool Forward, float Length)>> Sections =
-                new Dictionary<int, List<(long, bool, float)>>();
+            public readonly Dictionary<int, List<SectionUser>> Sections = new Dictionary<int, List<SectionUser>>();
 
             /// <summary>Single-track sections claimed for one direction by a waiting train of higher rank.</summary>
             public readonly Dictionary<int, (long Train, bool Forward)> Claims = new Dictionary<int, (long, bool)>();
@@ -162,16 +196,21 @@ namespace SmartTrains.Core.Dispatch
             var granted = new Dictionary<long, int>();
             var routes = new Dictionary<long, List<Move>>();
 
+            m_Fronts.Clear();
+            foreach (TrainInput train in trains)
+                m_Fronts[train.Id] = Front(train);
             foreach (TrainInput train in trains)
             {
                 routes[train.Id] = train.Route;
                 int end = Math.Max(train.Committed, GrantedIndex(train));
                 end = Math.Min(end, train.Route.Count - 1);
                 granted[train.Id] = end;
+                // Where the train is comes first, so that a section it is in
+                // counts as occupied even if it is also granted to it.
                 foreach (Move move in train.Occupied)
-                    Hold(holdings, train, move.Lane, move.Forward);
+                    Hold(holdings, train, move.Lane, move.Forward, occupies: true);
                 for (int i = 0; i <= end; i++)
-                    Hold(holdings, train, train.Route[i].Lane, train.Route[i].Forward);
+                    Hold(holdings, train, train.Route[i].Lane, train.Route[i].Forward, occupies: false);
             }
 
             var orders = new Dictionary<long, TrainOrder>();
@@ -254,7 +293,33 @@ namespace SmartTrains.Core.Dispatch
             return true;
         }
 
-        private void Hold(Holdings holdings, TrainInput train, int lane, bool forward)
+        /// <summary>Each train's front section and how far into it the front is; see <see cref="Front"/>.</summary>
+        private readonly Dictionary<long, (int Section, float Along)> m_Fronts = new Dictionary<long, (int, float)>();
+
+        /// <summary>
+        /// The section the train's front is in, and how far the front has
+        /// come through it in the train's direction; section -1 if the front
+        /// is in a junction area.
+        /// </summary>
+        private (int Section, float Along) Front(TrainInput train)
+        {
+            if (train.Route.Count == 0)
+                return (-1, 0f);
+            Move front = train.Route[0];
+            int section = m_Layout.SectionOf(front.Lane);
+            if (section < 0)
+                return (-1, 0f);
+            float laneLength = m_Network.Lanes[front.Lane].Length;
+            float start = m_LaneOffset[front.Lane];
+            // With the section's direction, the front is at the lane's start
+            // offset plus what it has run of the lane; against it, the
+            // section's far end is where the train came in.
+            if (SectionForward(section, front))
+                return (section, start + laneLength - train.FrontRemaining);
+            return (section, m_Layout.Sections[section].Length - start - train.FrontRemaining);
+        }
+
+        private void Hold(Holdings holdings, TrainInput train, int lane, bool forward, bool occupies)
         {
             int section = m_Layout.SectionOf(lane);
             if (section < 0)
@@ -262,17 +327,30 @@ namespace SmartTrains.Core.Dispatch
                 holdings.Lanes[lane] = train.Id;
                 return;
             }
-            if (!holdings.Sections.TryGetValue(section, out List<(long Train, bool Forward, float Length)> users))
+            if (!holdings.Sections.TryGetValue(section, out List<SectionUser> users))
             {
-                users = new List<(long, bool, float)>();
+                users = new List<SectionUser>();
                 holdings.Sections[section] = users;
             }
-            foreach ((long Train, bool Forward, float Length) user in users)
+            foreach (SectionUser user in users)
             {
                 if (user.Train == train.Id)
                     return;
             }
-            users.Add((train.Id, SectionForward(section, new Move(lane, forward)), train.Length));
+            float along = float.NegativeInfinity;
+            if (occupies)
+            {
+                (int frontSection, float frontAlong) = m_Fronts[train.Id];
+                along = frontSection == section ? frontAlong : float.PositiveInfinity;
+            }
+            users.Add(new SectionUser
+            {
+                Train = train.Id,
+                Forward = SectionForward(section, new Move(lane, forward)),
+                Length = train.Length,
+                Occupies = occupies,
+                Along = along,
+            });
         }
 
         // ---- Extending a grant ----
@@ -372,6 +450,23 @@ namespace SmartTrains.Core.Dispatch
         {
             int lastSection = to >= 0 && to < route.Count ? m_Layout.SectionOf(route[to].Lane) : -1;
             var checkedSections = new HashSet<int>();
+
+            // A train cannot pass the train ahead of it on the same track.
+            // Track beyond that train is granted to the train ahead first:
+            // granted to the one behind, it would hold the one ahead back for
+            // a train that cannot get by, and the two would wait for each
+            // other. The train may still close up behind it.
+            (int frontSection, float frontAlong) = m_Fronts.TryGetValue(train.Id, out (int, float) f) ? f : (-1, 0f);
+            if (frontSection >= 0 && LeavesSection(route, from, to, frontSection)
+                && holdings.Sections.TryGetValue(frontSection, out List<SectionUser> mine))
+            {
+                bool myForward = SectionForward(frontSection, route[0]);
+                foreach (SectionUser user in mine)
+                {
+                    if (user.Train != train.Id && user.Occupies && user.Forward == myForward && user.Along > frontAlong)
+                        return Refuse(order, HoldReason.TrackHeld, user.Train, from);
+                }
+            }
             for (int i = from; i <= to; i++)
             {
                 int lane = route[i].Lane;
@@ -392,15 +487,19 @@ namespace SmartTrains.Core.Dispatch
                 bool forward = SectionForward(section, route[i]);
                 if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward)
                     return Refuse(order, HoldReason.GivingWay, claim.Train, i);
-                if (!holdings.Sections.TryGetValue(section, out List<(long Train, bool Forward, float Length)> users))
+                if (!holdings.Sections.TryGetValue(section, out List<SectionUser> users))
                     continue;
                 float used = 0f;
                 long last = 0;
-                foreach ((long Train, bool Forward, float Length) user in users)
+                foreach (SectionUser user in users)
                 {
                     if (user.Train == train.Id)
                         continue;
                     if (user.Forward != forward)
+                        return Refuse(order, HoldReason.TrackHeld, user.Train, i);
+                    // Passing through a section a train stands or runs in,
+                    // the grant would lead past it; see above.
+                    if (section != lastSection && section != frontSection && user.Occupies)
                         return Refuse(order, HoldReason.TrackHeld, user.Train, i);
                     used += user.Length + kMargin;
                     last = user.Train;
@@ -412,6 +511,17 @@ namespace SmartTrains.Core.Dispatch
                     return Refuse(order, HoldReason.NoRoomAhead, last, i);
             }
             return true;
+        }
+
+        /// <summary>Whether <c>route[from..to]</c> reaches a lane outside the given section.</summary>
+        private bool LeavesSection(List<Move> route, int from, int to, int section)
+        {
+            for (int i = from; i <= to; i++)
+            {
+                if (m_Layout.SectionOf(route[i].Lane) != section)
+                    return true;
+            }
+            return false;
         }
 
         private static bool HeldByOther(Holdings holdings, int lane, long train, out long holder)
@@ -430,7 +540,7 @@ namespace SmartTrains.Core.Dispatch
         private void Grant(TrainInput train, List<Move> route, int from, int to, Holdings holdings)
         {
             for (int i = from; i <= to; i++)
-                Hold(holdings, train, route[i].Lane, route[i].Forward);
+                Hold(holdings, train, route[i].Lane, route[i].Forward, occupies: false);
         }
 
         /// <summary>

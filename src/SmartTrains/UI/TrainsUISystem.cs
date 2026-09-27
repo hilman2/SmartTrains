@@ -137,7 +137,8 @@ namespace SmartTrains.UI
             var train = new Entity { Index = index, Version = version };
             Dispatch.DispatchSystem dispatch = DispatchSystem;
             IReadOnlyDictionary<Entity, Dispatch.DispatchState> states = dispatch != null ? dispatch.States : new Dictionary<Entity, Dispatch.DispatchState>();
-            TrainDiagnosis.Write(EntityManager, m_NameSystem, m_Reader, train, m_SimulationSystem.frameIndex, states, dispatch != null && dispatch.Active);
+            uint frame = m_SimulationSystem.frameIndex;
+            TrainDiagnosis.Write(EntityManager, m_NameSystem, t => m_Reader.StandingMinutes(t, frame), train, frame, states, dispatch != null && dispatch.Active);
         }
 
         /// <summary>Moves the camera to where the game removed a train.</summary>
