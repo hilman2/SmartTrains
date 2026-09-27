@@ -68,6 +68,17 @@ namespace SmartTrains.Core.Tests.Monitor
             Assert.Equal(WaitReason.RoutePending, WaitClassifier.Classify(train));
         }
 
+        [Fact]
+        public void AHeldTrainWaitsAtTheSignalWhateverTheGameReportsAhead()
+        {
+            TrainObservation train = Standing(Obstacle.Ahead, isTrain: true);
+            train.HeldByDispatcher = true;
+            Assert.Equal(WaitReason.AtSignal, WaitClassifier.Classify(train));
+
+            train.Boarding = true;
+            Assert.Equal(WaitReason.Boarding, WaitClassifier.Classify(train));
+        }
+
         [Theory]
         [InlineData(Obstacle.None)]
         [InlineData(Obstacle.Limit)]

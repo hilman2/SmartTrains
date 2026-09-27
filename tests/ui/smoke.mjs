@@ -109,7 +109,9 @@ const base = {
   line: formatted("Transport.LINE_NAME"), lineColor: "#3dbf6b", moving: true, reason: 0, minutes: 0, blocker: null,
   passengers: 120, passengerCapacity: 400, load: 0, loadCapacity: 0, resource: "",
   from: custom("Central Station"), to: custom("Harbour"),
+  dispatch: { rank: 20, holding: false, reason: 0, waitingFor: null },
 };
+const held = { rank: 34.6, holding: true, reason: 1, waitingFor: { index: 12, version: 1, line: custom("Line 2") } };
 const rows = [
   { ...base, index: 11, moving: false, reason: 9, minutes: 3.2, blocker: { index: 12, version: 1, line: custom("Line 2") } },
   { ...base, index: 12, moving: false, reason: 3, minutes: 17.6, blocker: { index: 13, version: 1, line: null } },
@@ -121,8 +123,11 @@ const rows = [
   { ...base, index: 18, moving: false, reason: 10, minutes: 1, from: null, to: null, line: custom("A very long line name that does not fit into the panel at all") },
   { ...base, index: 19, cargo: true, moving: false, reason: 1, passengerCapacity: 0, load: 0, loadCapacity: 60 },
   { ...base, index: 20, moving: false, reason: 8, minutes: 0 },
+  { ...base, index: 21, moving: false, reason: 11, minutes: 4, blocker: held.waitingFor, dispatch: held },
+  { ...base, index: 22, moving: true, reason: 0, dispatch: { ...held, reason: 3, waitingFor: null } },
+  { ...base, index: 23, dispatch: null },
 ];
-const trains = { total: rows.length, moving: 3, standing: 4, atPlatform: 3, deadlocked: 1, rows };
+const trains = { total: rows.length, moving: 5, standing: 5, atPlatform: 3, deadlocked: 1, dispatcherActive: false, holding: 2, rows };
 const despawn = {
   id: 1, time: "09:39", cause: 0, train: 124360, line: "Güterzugroute 5", cargo: true, through: false, returning: false,
   minutes: 35.4, passengers: 0, loadPercent: 23, resource: "Timber", backToStart: true,
@@ -140,13 +145,14 @@ const despawns = {
 const scenarios = {
   "empty city": {},
   "all trains": { "smartTrains.trains": trains },
+  "dispatcher on": { "smartTrains.trains": { ...trains, dispatcherActive: true } },
   "standing filter": { filter: "standing", "smartTrains.trains": trains },
   "moving filter": { filter: "moving", "smartTrains.trains": trains },
   "moving filter, none moving": { filter: "moving", "smartTrains.trains": { ...trains, moving: 0, rows: rows.filter((r) => !r.moving) } },
   "removed, none": { filter: "removed", "smartTrains.trains": trains },
   "removed": { filter: "removed", "smartTrains.trains": trains, "smartTrains.despawns": despawns },
   "every reason": {
-    "smartTrains.trains": { ...trains, rows: Array.from({ length: 11 }, (_, reason) => ({ ...base, index: 100 + reason, moving: reason === 0, reason, minutes: 5 })) },
+    "smartTrains.trains": { ...trains, rows: Array.from({ length: 12 }, (_, reason) => ({ ...base, index: 100 + reason, moving: reason === 0, reason, minutes: 5 })) },
   },
 };
 

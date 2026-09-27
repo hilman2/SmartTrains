@@ -518,14 +518,15 @@ namespace SmartTrains.Core.Dispatch
         private List<Move> FindWay(Move before, Move after, int enterArea, int through, int exitArea)
         {
             // Breadth-first over moves, allowed only on the two areas and the
-            // loop track, so the search stays within the loop.
+            // loop track, so the search stays within the loop. The queue is a
+            // list with a read position: the game's runtime has Queue<T> in
+            // two assemblies, and a mod cannot name it unambiguously.
             var previous = new Dictionary<Move, Move>();
-            var queue = new Queue<Move>();
-            queue.Enqueue(before);
+            var queue = new List<Move> { before };
             previous[before] = before;
-            while (queue.Count > 0)
+            for (int head = 0; head < queue.Count; head++)
             {
-                Move current = queue.Dequeue();
+                Move current = queue[head];
                 foreach (Move next in m_Network.Successors(current))
                 {
                     if (next.Equals(after))
@@ -545,7 +546,7 @@ namespace SmartTrains.Core.Dispatch
                     if (!allowed)
                         continue;
                     previous[next] = current;
-                    queue.Enqueue(next);
+                    queue.Add(next);
                 }
             }
             return null;

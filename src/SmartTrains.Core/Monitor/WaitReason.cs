@@ -64,6 +64,9 @@ namespace SmartTrains.Core.Monitor
 
         /// <summary>Standing, and the game reports no cause.</summary>
         Unknown,
+
+        /// <summary>Held by the dispatcher at a safe place until the track ahead is free.</summary>
+        AtSignal,
     }
 
     /// <summary>What the game layer read about one train, reduced to what decides its wait reason.</summary>
@@ -86,6 +89,9 @@ namespace SmartTrains.Core.Monitor
 
         /// <summary>The game's deadlock detection has marked the train.</summary>
         public bool Stuck;
+
+        /// <summary>The dispatcher holds the train in front of track it has not granted yet.</summary>
+        public bool HeldByDispatcher;
     }
 
     public static class WaitClassifier
@@ -107,6 +113,12 @@ namespace SmartTrains.Core.Monitor
 
             if (train.Moving)
                 return WaitReason.None;
+
+            // A held train brakes for the lane it may not enter. The game
+            // reports that lane's last holder as the blocker, which says
+            // nothing about why the dispatcher holds it.
+            if (train.HeldByDispatcher)
+                return WaitReason.AtSignal;
 
             // While a new route is computed the game clears the train's
             // planned track, and the train brakes for the end of it.

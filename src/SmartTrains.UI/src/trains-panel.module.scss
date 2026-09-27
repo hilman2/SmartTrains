@@ -6,6 +6,7 @@ $moving: #3dbf6b;
 $platform: #8fd3ff;
 $standing: #f5b83d;
 $alarm: #e5484d;
+$signal: #c9a8ff;
 
 .panel {
   position: absolute;
@@ -38,6 +39,31 @@ $alarm: #e5484d;
   font-weight: bold;
   color: #ffffff;
   background-color: rgba(229, 72, 77, 0.6);
+}
+
+.dispatcher {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 6rem 12rem 2rem 12rem;
+  padding: 4rem 4rem 4rem 10rem;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dispatcherOn {
+  background-color: rgba(201, 168, 255, 0.18);
+}
+
+.dispatcherText {
+  flex: 1;
+  font-size: 13rem;
+}
+
+.dispatcherButton {
+  flex-shrink: 0;
+  padding: 4rem 10rem;
+  font-size: 13rem;
+  white-space: nowrap;
 }
 
 .filters {
@@ -167,6 +193,10 @@ $alarm: #e5484d;
   background-color: $alarm;
 }
 
+.dotSignal {
+  background-color: $signal;
+}
+
 .statusText {
   flex: 1;
   text-align: left;
@@ -202,6 +232,19 @@ $alarm: #e5484d;
   padding-top: 3rem;
   font-size: 12rem;
   opacity: 0.65;
+}
+
+.dispatchRow {
+  width: 100%;
+  text-align: left;
+  padding-top: 3rem;
+  font-size: 12rem;
+  color: $signal;
+}
+
+// What the dispatcher would do while switched off: shown, but quieter.
+.dispatchPlanned {
+  opacity: 0.6;
 }
 
 .chainRow {

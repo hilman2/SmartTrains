@@ -53,6 +53,9 @@ namespace SmartTrains.Monitor
 
         public Entity From;
         public Entity To;
+
+        /// <summary>The dispatcher's last decision on the train; null if it does not manage it.</summary>
+        public Dispatch.DispatchState Dispatch;
     }
 
     /// <summary>
@@ -98,14 +101,17 @@ namespace SmartTrains.Monitor
 
         /// <summary>Reads all rail trains; trams and subways are left out.</summary>
         /// <param name="frame">The current simulation frame, for the standing times.</param>
-        public List<TrainRow> Read(uint frame)
+        /// <param name="dispatch">The dispatcher's last decision per train.</param>
+        /// <param name="dispatcherActive">Whether the dispatcher holds trains, or only plans.</param>
+        public List<TrainRow> Read(uint frame, IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch, bool dispatcherActive)
         {
             var rows = new List<TrainRow>();
             using (NativeArray<Entity> trains = m_TrainQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity train in trains)
                 {
-                    TrainRow row = ReadTrain(train, frame);
+                    dispatch.TryGetValue(train, out Dispatch.DispatchState state);
+                    TrainRow row = ReadTrain(train, frame, state, dispatcherActive);
                     if (row != null)
                         rows.Add(row);
                 }
@@ -114,14 +120,15 @@ namespace SmartTrains.Monitor
             return rows;
         }
 
-        private TrainRow ReadTrain(Entity train, uint frame)
+        private TrainRow ReadTrain(Entity train, uint frame, Dispatch.DispatchState dispatch, bool dispatcherActive)
         {
             EntityManager em = m_EntityManager;
             Entity prefab = em.GetComponentData<PrefabRef>(train).m_Prefab;
             if (!em.TryGetComponent(prefab, out TrainData trainData) || (trainData.m_TrackType & TrackTypes.Train) == 0)
                 return null;
 
-            var row = new TrainRow { Train = train };
+            var row = new TrainRow { Train = train, Dispatch = dispatch };
+            bool held = dispatcherActive && dispatch != null && dispatch.HoldLane != Entity.Null;
             bool boarding = false;
             bool departureDue = false;
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))
@@ -160,9 +167,12 @@ namespace SmartTrains.Monitor
                 ObstacleIsTrain = blockingTrain != Entity.Null,
                 RoutePending = (path & PathFlags.Pending) != 0,
                 Stuck = (path & PathFlags.Stuck) != 0,
+                HeldByDispatcher = held,
             });
             if (row.Reason == WaitReason.TrainAhead || row.Reason == WaitReason.CrossingTrain || row.Reason == WaitReason.OncomingTrain)
                 row.Blocker = blockingTrain;
+            else if (row.Reason == WaitReason.AtSignal)
+                row.Blocker = dispatch.WaitingFor;
 
             uint frames = m_Clock.Observe(EntityKey.Of(train), !row.Moving, frame);
             row.StandingMinutes = ToMinutes(frames);

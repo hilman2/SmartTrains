@@ -3,7 +3,7 @@ import { LocalizedEntityName, Name } from "cs2/l10n";
 import { Button, Panel, Scrollable, Tooltip } from "cs2/ui";
 import classNames from "classnames";
 import { ReactElement } from "react";
-import { actions, Despawn, DespawnCause, Despawns, despawns$, Filter, filter$, panelOpen$, setPanelOpen, TrainRow, Trains, trains$, WaitReason } from "bindings";
+import { actions, Despawn, DespawnCause, Despawns, despawns$, Dispatch, Filter, filter$, HoldReason, panelOpen$, setPanelOpen, TrainRow, Trains, trains$, WaitReason } from "bindings";
 import { Translate, useTranslate } from "localization";
 import styles from "trains-panel.module.scss";
 
@@ -62,6 +62,7 @@ export const TrainsPanel = () => {
       onClose={() => setPanelOpen(false)}
     >
       <SummaryLine trains={trains} t={t} />
+      <DispatcherBar trains={trains} t={t} />
       <div className={styles.filters}>
         {filters.map((f) => (
           <Button
@@ -81,7 +82,7 @@ export const TrainsPanel = () => {
         ) : rows.length === 0 ? (
           <div className={styles.empty}>{trains.total === 0 ? t("Empty.City", "There are no trains in this city.") : t("Empty.Filter", "No train in this view.")}</div>
         ) : (
-          rows.map((row) => <TrainCard key={`${row.index}.${row.version}`} row={row} t={t} game={game} />)
+          rows.map((row) => <TrainCard key={`${row.index}.${row.version}`} row={row} active={trains.dispatcherActive} t={t} game={game} />)
         )}
       </Scrollable>
     </Panel>
@@ -98,6 +99,27 @@ const SummaryLine = ({ trains, t }: { trains: Trains; t: Translate }) => {
     <div className={styles.summary}>
       <div className={styles.summaryText}>{parts.join(" · ")}</div>
       {trains.deadlocked > 0 && <div className={styles.summaryAlarm}>{`${trains.deadlocked} ${t("Count.Deadlocked", "deadlocked")}`}</div>}
+    </div>
+  );
+};
+
+/**
+ * The dispatcher's switch. Off, it still decides every round what it would
+ * do, and the cards show that, so a player can check it before letting it
+ * hold trains.
+ */
+const DispatcherBar = ({ trains, t }: { trains: Trains; t: Translate }) => {
+  const state = trains.dispatcherActive
+    ? `${t("Dispatcher.Label", "Dispatcher")}: ${t("Dispatcher.On", "on")} · ${t("Dispatcher.Holding", "holding")} ${trains.holding}`
+    : `${t("Dispatcher.Label", "Dispatcher")}: ${t("Dispatcher.Off", "off")} · ${t("Dispatcher.WouldHold", "would hold")} ${trains.holding}`;
+  return (
+    <div className={classNames(styles.dispatcher, trains.dispatcherActive && styles.dispatcherOn)}>
+      <Hint text={t("Dispatcher.Hint", "The dispatcher lets a train on only when the track up to the next safe place to wait is free, so trains never stop in junctions or on single track in each other's way. Switched off, it only shows what it would do.")}>
+        <div className={styles.dispatcherText}>{state}</div>
+      </Hint>
+      <Button variant="flat" className={styles.dispatcherButton} onSelect={actions.toggleDispatcher}>
+        {trains.dispatcherActive ? t("Dispatcher.SwitchOff", "Switch off") : t("Dispatcher.SwitchOn", "Switch on")}
+      </Button>
     </div>
   );
 };
@@ -129,6 +151,8 @@ function statusClass(row: TrainRow): string {
       return styles.dotPlatform;
     case WaitReason.Deadlock:
       return styles.dotAlarm;
+    case WaitReason.AtSignal:
+      return styles.dotSignal;
     default:
       return styles.dotStanding;
   }
@@ -147,7 +171,28 @@ const reasonFallback: Record<WaitReason, string> = {
   [WaitReason.RoutePending]: "Looking for a route",
   [WaitReason.Deadlock]: "Deadlocked",
   [WaitReason.Unknown]: "Standing",
+  [WaitReason.AtSignal]: "Waiting at a signal",
 };
+
+const holdFallback: Record<HoldReason, string> = {
+  [HoldReason.None]: "",
+  [HoldReason.TrackHeld]: "track granted to",
+  [HoldReason.NoRoomAhead]: "no room ahead, behind",
+  [HoldReason.GivingWay]: "gives way to",
+};
+
+/**
+ * One line on what the dispatcher does with a train it holds: holds it, or
+ * would hold it when switched on, and for which train. Null for a train it
+ * lets run.
+ */
+function dispatchText(dispatch: Dispatch | null, active: boolean, t: Translate): string | null {
+  if (!dispatch || !dispatch.holding) return null;
+  const who = active ? t("Hold.Active", "Dispatcher holds") : t("Hold.Planned", "Dispatcher would hold");
+  const why = dispatch.reason !== HoldReason.None ? ` · ${t("Hold." + HoldReason[dispatch.reason], holdFallback[dispatch.reason])}` : "";
+  const train = dispatch.waitingFor ? ` #${dispatch.waitingFor.index}` : "";
+  return `${who}${why}${train} · ${t("Rank", "rank")} ${Math.round(dispatch.rank)}`;
+}
 
 /** The reason's text, with the cargo wording where passengers make no sense. */
 function reasonLabel(row: TrainRow, t: Translate): string {
@@ -182,8 +227,9 @@ const EntityName = ({ name, fallback, className }: { name: Name | null; fallback
   <div className={className}>{name ? <LocalizedEntityName value={name} /> : fallback}</div>
 );
 
-const TrainCard = ({ row, t, game }: { row: TrainRow; t: Translate; game: Translate }) => {
+const TrainCard = ({ row, active, t, game }: { row: TrainRow; active: boolean; t: Translate; game: Translate }) => {
   const load = loadText(row, t, game);
+  const dispatch = dispatchText(row.dispatch, active, t);
   return (
     <div className={classNames(styles.card, row.reason === WaitReason.Deadlock && styles.cardAlarm)}>
       <Button variant="flat" className={styles.cardMain} onSelect={() => actions.select(row)}>
@@ -206,6 +252,7 @@ const TrainCard = ({ row, t, game }: { row: TrainRow; t: Translate; game: Transl
           </div>
         )}
         {load && <div className={styles.loadRow}>{load}</div>}
+        {dispatch && <div className={classNames(styles.dispatchRow, !active && styles.dispatchPlanned)}>{dispatch}</div>}
       </Button>
       {!row.moving && (
         <div className={styles.actionRow}>

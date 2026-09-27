@@ -35,6 +35,14 @@ namespace SmartTrains.UI
         private SimulationSystem m_SimulationSystem;
         private SelectedInfoUISystem m_SelectedInfo;
         private CameraUpdateSystem m_CameraSystem;
+
+        /// <summary>
+        /// Looked up on first use: DispatchSystem asks this system for
+        /// standing times when it is created, so creating it from here as
+        /// well would go round in a circle.
+        /// </summary>
+        private Dispatch.DispatchSystem m_Dispatch;
+
         private TrainReader m_Reader;
         private RawValueBinding m_TrainsBinding;
         private RawValueBinding m_DespawnsBinding;
@@ -63,6 +71,19 @@ namespace SmartTrains.UI
             AddBinding(new TriggerBinding<int, int>(kGroup, "select", OnSelect));
             AddBinding(new TriggerBinding<int, int>(kGroup, "diagnose", OnDiagnose));
             AddBinding(new TriggerBinding<int>(kGroup, "showDespawn", OnShowDespawn));
+            AddBinding(new TriggerBinding(kGroup, "toggleDispatcher", OnToggleDispatcher));
+        }
+
+        private Dispatch.DispatchSystem DispatchSystem => m_Dispatch ?? (m_Dispatch = World.GetExistingSystemManaged<Dispatch.DispatchSystem>());
+
+        private void OnToggleDispatcher()
+        {
+            if (Mod.Settings == null)
+                return;
+            Mod.Settings.DispatcherActive = !Mod.Settings.DispatcherActive;
+            Mod.Settings.ApplyAndSave();
+            Mod.Log.Info(Mod.Settings.DispatcherActive ? "Dispatcher switched on: it now holds trains." : "Dispatcher switched off: it only plans, trains run as without the mod.");
+            m_NextRead = default;
         }
 
         protected override void OnUpdate()
@@ -73,7 +94,9 @@ namespace SmartTrains.UI
                 if (DateTime.UtcNow < m_NextRead)
                     return;
                 m_NextRead = DateTime.UtcNow + kReadInterval;
-                m_Rows = m_Reader.Read(m_SimulationSystem.frameIndex);
+                Dispatch.DispatchSystem dispatch = DispatchSystem;
+                IReadOnlyDictionary<Entity, Dispatch.DispatchState> states = dispatch != null ? dispatch.States : new Dictionary<Entity, Dispatch.DispatchState>();
+                m_Rows = m_Reader.Read(m_SimulationSystem.frameIndex, states, dispatch != null && dispatch.Active);
                 m_Rows.Sort(Order);
                 if (!m_PanelOpen)
                     return;
@@ -203,6 +226,16 @@ namespace SmartTrains.UI
             writer.Write(atPlatform);
             writer.PropertyName("deadlocked");
             writer.Write(deadlocked);
+            int holding = 0;
+            foreach (TrainRow row in m_Rows)
+            {
+                if (row.Dispatch != null && row.Dispatch.HoldLane != Entity.Null)
+                    holding++;
+            }
+            writer.PropertyName("dispatcherActive");
+            writer.Write(DispatchSystem != null && DispatchSystem.Active);
+            writer.PropertyName("holding");
+            writer.Write(holding);
             int count = Math.Min(m_Rows.Count, kMaxRows);
             writer.PropertyName("rows");
             writer.ArrayBegin((uint)count);
@@ -238,21 +271,7 @@ namespace SmartTrains.UI
             writer.PropertyName("minutes");
             writer.Write(row.StandingMinutes);
             writer.PropertyName("blocker");
-            if (row.Blocker == Entity.Null || !EntityManager.Exists(row.Blocker))
-            {
-                writer.WriteNull();
-            }
-            else
-            {
-                writer.TypeBegin("smartTrains.TrainRef");
-                writer.PropertyName("index");
-                writer.Write(row.Blocker.Index);
-                writer.PropertyName("version");
-                writer.Write(row.Blocker.Version);
-                writer.PropertyName("line");
-                WriteName(writer, EntityManager.TryGetComponent(row.Blocker, out Game.Routes.CurrentRoute route) ? route.m_Route : Entity.Null);
-                writer.TypeEnd();
-            }
+            WriteTrainRef(writer, row.Blocker);
             writer.PropertyName("passengers");
             writer.Write(row.Passengers);
             writer.PropertyName("passengerCapacity");
@@ -267,6 +286,49 @@ namespace SmartTrains.UI
             WriteName(writer, row.From);
             writer.PropertyName("to");
             WriteName(writer, row.To);
+            writer.PropertyName("dispatch");
+            WriteDispatch(writer, row.Dispatch);
+            writer.TypeEnd();
+        }
+
+        /// <summary>
+        /// The dispatcher's decision on a train: its rank, and if it holds the
+        /// train, why and for whom. Written whether the dispatcher is active
+        /// or only plans, so the panel can show what it would do.
+        /// </summary>
+        private void WriteDispatch(IJsonWriter writer, Dispatch.DispatchState state)
+        {
+            if (state == null)
+            {
+                writer.WriteNull();
+                return;
+            }
+            writer.TypeBegin("smartTrains.Dispatch");
+            writer.PropertyName("rank");
+            writer.Write(state.Order.Rank);
+            writer.PropertyName("holding");
+            writer.Write(state.HoldLane != Entity.Null);
+            writer.PropertyName("reason");
+            writer.Write((int)state.Order.Reason);
+            writer.PropertyName("waitingFor");
+            WriteTrainRef(writer, state.WaitingFor);
+            writer.TypeEnd();
+        }
+
+        private void WriteTrainRef(IJsonWriter writer, Entity train)
+        {
+            if (train == Entity.Null || !EntityManager.Exists(train))
+            {
+                writer.WriteNull();
+                return;
+            }
+            writer.TypeBegin("smartTrains.TrainRef");
+            writer.PropertyName("index");
+            writer.Write(train.Index);
+            writer.PropertyName("version");
+            writer.Write(train.Version);
+            writer.PropertyName("line");
+            WriteName(writer, EntityManager.TryGetComponent(train, out Game.Routes.CurrentRoute route) ? route.m_Route : Entity.Null);
             writer.TypeEnd();
         }
 

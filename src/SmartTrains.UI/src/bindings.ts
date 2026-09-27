@@ -18,6 +18,15 @@ export enum WaitReason {
   RoutePending = 8,
   Deadlock = 9,
   Unknown = 10,
+  AtSignal = 11,
+}
+
+/** Numbers as in SmartTrains.Core.Dispatch.HoldReason. */
+export enum HoldReason {
+  None = 0,
+  TrackHeld = 1,
+  NoRoomAhead = 2,
+  GivingWay = 3,
 }
 
 export interface EntityRef {
@@ -55,6 +64,17 @@ export interface TrainRow extends EntityRef {
   resource: string;
   from: Name | null;
   to: Name | null;
+  /** The dispatcher's last decision; null if it does not manage the train. */
+  dispatch: Dispatch | null;
+}
+
+export interface Dispatch {
+  /** Base rank plus two per minute standing; the higher, the sooner it gets track. */
+  rank: number;
+  /** The dispatcher holds the train in front of track it has not granted, or would when switched off. */
+  holding: boolean;
+  reason: HoldReason;
+  waitingFor: TrainRef | null;
 }
 
 export interface Trains {
@@ -64,11 +84,15 @@ export interface Trains {
   standing: number;
   atPlatform: number;
   deadlocked: number;
+  /** Whether the dispatcher holds trains; off, it only plans. */
+  dispatcherActive: boolean;
+  /** Trains the dispatcher holds, or would hold when switched off. */
+  holding: number;
   /** Deadlocked first, then standing longest first, then at a platform, then moving. */
   rows: TrainRow[];
 }
 
-const emptyTrains: Trains = { total: 0, moving: 0, standing: 0, atPlatform: 0, deadlocked: 0, rows: [] };
+const emptyTrains: Trains = { total: 0, moving: 0, standing: 0, atPlatform: 0, deadlocked: 0, dispatcherActive: false, holding: 0, rows: [] };
 
 export const trains$ = bindValue<Trains>(group, "trains", emptyTrains);
 
@@ -146,4 +170,6 @@ export const actions = {
   diagnose: (train: EntityRef) => trigger(group, "diagnose", train.index, train.version),
   /** Moves the camera to where the game removed a train. */
   showDespawn: (id: number) => trigger(group, "showDespawn", id),
+  /** Switches between holding trains and only planning. */
+  toggleDispatcher: () => trigger(group, "toggleDispatcher"),
 };
