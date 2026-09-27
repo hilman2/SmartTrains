@@ -231,7 +231,7 @@ namespace SmartTrains.UI
             int holding = 0;
             foreach (TrainRow row in m_Rows)
             {
-                if (row.Dispatch != null && row.Dispatch.HoldLane != Entity.Null)
+                if (row.Dispatch != null && row.Dispatch.Holding)
                     holding++;
             }
             writer.PropertyName("dispatcherActive");
@@ -309,7 +309,7 @@ namespace SmartTrains.UI
             writer.PropertyName("rank");
             writer.Write(state.Order.Rank);
             writer.PropertyName("holding");
-            writer.Write(state.HoldLane != Entity.Null);
+            writer.Write(state.Holding);
             writer.PropertyName("reason");
             writer.Write((int)state.Order.Reason);
             writer.PropertyName("waitingFor");

@@ -60,6 +60,29 @@ namespace SmartTrains.Core.Tests.Network
         }
 
         [Fact]
+        public void TheFingerprintIgnoresTheOrderOfTheLanes()
+        {
+            var (b, _) = TrackBuilder.PassingLoop();
+            TrackNetwork n = b.Build();
+            var reversed = new TrackNetwork(n.Lanes.Reverse(), new (long, long)[0]);
+            Assert.Equal(n.Fingerprint(), reversed.Fingerprint());
+        }
+
+        [Fact]
+        public void TheFingerprintChangesWithALanesEnds()
+        {
+            var (b, l) = TrackBuilder.PassingLoop();
+            TrackNetwork n = b.Build();
+            var moved = n.Lanes.Select(lane =>
+            {
+                if (lane.Id == l.L1)
+                    lane.EndNode += 1;
+                return lane;
+            });
+            Assert.NotEqual(n.Fingerprint(), new TrackNetwork(moved, new (long, long)[0]).Fingerprint());
+        }
+
+        [Fact]
         public void OverlapsAreKnownFromBothSidesAndUnknownLanesAreIgnored()
         {
             var (b, l) = TrackBuilder.PassingLoop();

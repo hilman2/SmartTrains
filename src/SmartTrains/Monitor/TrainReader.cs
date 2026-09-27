@@ -128,7 +128,7 @@ namespace SmartTrains.Monitor
                 return null;
 
             var row = new TrainRow { Train = train, Dispatch = dispatch };
-            bool held = dispatcherActive && dispatch != null && dispatch.HoldLane != Entity.Null;
+            bool held = dispatcherActive && dispatch != null && dispatch.Holding;
             bool boarding = false;
             bool departureDue = false;
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))

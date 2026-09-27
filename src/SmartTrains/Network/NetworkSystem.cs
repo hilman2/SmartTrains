@@ -41,17 +41,22 @@ namespace SmartTrains.Network
         {
             base.OnCreate();
             m_Reader = new NetworkReader(EntityManager, GetEntityQuery(NetworkReader.QueryDesc()));
+            // Tram track lies in road lanes, which carry CarLane as well; the
+            // game updates those with every change to a road or junction,
+            // e.g. new traffic lights. Train track has no CarLane.
             m_Changed = GetEntityQuery(new EntityQueryDesc
             {
                 All = new[] { ComponentType.ReadOnly<Lane>(), ComponentType.ReadOnly<TrackLane>() },
                 Any = new[] { ComponentType.ReadOnly<Created>(), ComponentType.ReadOnly<Updated>(), ComponentType.ReadOnly<Deleted>() },
-                None = new[] { ComponentType.ReadOnly<Temp>() },
+                None = new[] { ComponentType.ReadOnly<Temp>(), ComponentType.ReadOnly<CarLane>() },
             });
         }
 
         protected override void OnGameLoaded(Context serializationContext)
         {
             base.OnGameLoaded(serializationContext);
+            // Entity keys of another city may match by chance; build anew.
+            Layout = null;
             m_Dirty = true;
             m_ChangedAt = DateTime.MinValue;
         }
@@ -77,16 +82,29 @@ namespace SmartTrains.Network
             }
         }
 
+        /// <summary>
+        /// Reads the network again, and keeps the old layout if nothing a
+        /// train runs on has changed. A new layout makes the dispatcher start
+        /// over and forget what it has granted, which must not happen for an
+        /// update that changed nothing, e.g. one the game sends to all lanes
+        /// of a rebuilt node.
+        /// </summary>
         private void Rebuild()
         {
             Stopwatch watch = Stopwatch.StartNew();
             TrackNetwork network = m_Reader.Read();
+            long fingerprint = network.Fingerprint();
+            if (Layout != null && fingerprint == m_Fingerprint)
+                return;
             var layout = new TrackLayout(network);
             watch.Stop();
+            m_Fingerprint = fingerprint;
             Layout = layout;
             Version++;
             if (network.Lanes.Count > 0)
                 Mod.Log.Info($"Track network: {layout.Summarize()}. Read in {watch.ElapsedMilliseconds} ms.");
         }
+
+        private long m_Fingerprint;
     }
 }

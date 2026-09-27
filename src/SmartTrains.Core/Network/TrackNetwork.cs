@@ -170,6 +170,31 @@ namespace SmartTrains.Core.Network
                 list.Add(lane);
         }
 
+        /// <summary>
+        /// A number that changes when any lane, its ends, direction or kind
+        /// changes, but not with the order the lanes were read in; the game
+        /// hands them over in no fixed order.
+        /// </summary>
+        public long Fingerprint()
+        {
+            long sum = m_Lanes.Count;
+            long mix = 0;
+            foreach (LaneInput lane in m_Lanes)
+            {
+                long h = lane.Id;
+                h = h * 1000003 ^ lane.StartNode;
+                h = h * 1000003 ^ lane.EndNode;
+                h = h * 1000003 ^ (lane.TwoWay ? 1 : 0);
+                h = h * 1000003 ^ (long)lane.Kind;
+                h = h * 1000003 ^ lane.Station;
+                // Two combinations, so that swapping values between lanes
+                // does not cancel out as it would in a plain sum or xor.
+                sum += h;
+                mix ^= h * 0x5bd1e995;
+            }
+            return sum * 31 + mix;
+        }
+
         /// <summary>The lane with the game layer's key, or -1.</summary>
         public int IndexOf(long laneId)
         {

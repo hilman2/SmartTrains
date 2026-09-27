@@ -38,7 +38,7 @@ namespace SmartTrains.Monitor
             BlockerChain chain = BlockerChains.Follow(EntityKey.Of(train), key =>
             {
                 Entity t = EntityKey.ToEntity(key);
-                if (dispatcherActive && dispatch.TryGetValue(t, out Dispatch.DispatchState s) && s.HoldLane != Entity.Null && s.WaitingFor != Entity.Null)
+                if (dispatcherActive && dispatch.TryGetValue(t, out Dispatch.DispatchState s) && s.Holding && s.WaitingFor != Entity.Null)
                     return EntityKey.Of(s.WaitingFor);
                 return BlockerOf(em, key);
             });

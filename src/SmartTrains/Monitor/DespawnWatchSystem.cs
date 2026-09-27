@@ -6,6 +6,7 @@ using Colossal.Serialization.Entities;
 using Game;
 using Game.Common;
 using Game.Pathfind;
+using Game.Prefabs;
 using Game.Simulation;
 using Game.Tools;
 using Game.UI;
@@ -172,6 +173,11 @@ namespace SmartTrains.Monitor
         private void Record(Entity train)
         {
             EntityManager em = EntityManager;
+            // Trams and subways share the vehicle components with trains, but
+            // the panel and the dispatcher are about trains only.
+            if (!em.TryGetComponent(train, out PrefabRef prefab) || !em.TryGetComponent(prefab.m_Prefab, out TrainData data)
+                || (data.m_TrackType & Game.Net.TrackTypes.Train) == 0)
+                return;
             PathFlags path = em.GetComponentData<PathOwner>(train).m_State;
             Entity target = em.TryGetComponent(train, out Target t) ? t.m_Target : Entity.Null;
             bool endReached = em.TryGetComponent(train, out TrainCurrentLane lane) && (lane.m_Front.m_LaneFlags & TrainLaneFlags.EndReached) != 0;

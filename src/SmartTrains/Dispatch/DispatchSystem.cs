@@ -38,6 +38,14 @@ namespace SmartTrains.Dispatch
 
         /// <summary>Lanes in the route the dispatcher saw, for diagnosis.</summary>
         public int RouteLength;
+
+        /// <summary>
+        /// The dispatcher refused the train track it needs and holds it for
+        /// that. A hold lane without a reason only marks where the grant ends
+        /// ahead of a running train, beyond what it needs yet; that is not
+        /// holding it.
+        /// </summary>
+        public bool Holding => HoldLane != Entity.Null && Order.Reason != HoldReason.None;
     }
 
     /// <summary>
@@ -53,7 +61,13 @@ namespace SmartTrains.Dispatch
     /// </summary>
     public partial class DispatchSystem : GameSystemBase
     {
-        private const int kRoundInterval = 4;
+        /// <summary>
+        /// Simulation steps per dispatcher round. Every step: between rounds a
+        /// train that has just got a new route runs without a hold, and the
+        /// game may reserve track for it that the dispatcher has granted to
+        /// another train.
+        /// </summary>
+        private const int kRoundInterval = 1;
 
         /// <summary>
         /// In-game minutes after which a held train is let go regardless. A
@@ -131,7 +145,12 @@ namespace SmartTrains.Dispatch
                     m_LayoutVersion = m_Network.Version;
                 }
                 if (m_Step++ % kRoundInterval == 0)
+                {
+                    m_Watch.Restart();
                     Round(layout.Network);
+                    m_Watch.Stop();
+                    CountTime(m_Watch.Elapsed.TotalMilliseconds);
+                }
                 if (Active)
                     PlaceMarks(layout.Network);
                 else if (m_Marks.Count > 0)
@@ -143,6 +162,28 @@ namespace SmartTrains.Dispatch
                 ClearAllMarks();
                 Enabled = false;
             }
+        }
+
+        private readonly System.Diagnostics.Stopwatch m_Watch = new System.Diagnostics.Stopwatch();
+        private int m_TimedRounds;
+        private double m_TimeSum;
+        private double m_TimeMax;
+
+        /// <summary>
+        /// Writes how long rounds take, every few thousand rounds. A round
+        /// runs every simulation step, so its cost matters.
+        /// </summary>
+        private void CountTime(double ms)
+        {
+            m_TimedRounds++;
+            m_TimeSum += ms;
+            m_TimeMax = Math.Max(m_TimeMax, ms);
+            if (m_TimedRounds < 5000)
+                return;
+            Mod.Log.Info($"Dispatcher: {m_TimedRounds} rounds for {m_States.Count} trains, {m_TimeSum / m_TimedRounds:0.00} ms on average, {m_TimeMax:0.0} ms at most.");
+            m_TimedRounds = 0;
+            m_TimeSum = 0;
+            m_TimeMax = 0;
         }
 
         /// <summary>
@@ -176,10 +217,17 @@ namespace SmartTrains.Dispatch
             }
 
             List<TrainOrder> orders = m_Dispatcher.Dispatch(inputs);
-            m_States.Clear();
+            var states = new Dictionary<Entity, DispatchState>();
             for (int i = 0; i < trains.Count; i++)
             {
                 (Entity train, TrainRoute route) = trains[i];
+                // A train whose route is being replaced keeps its last
+                // decision; see Input.
+                if (HoldActuator.RouteInFlux(EntityManager, train) && m_States.TryGetValue(train, out DispatchState kept))
+                {
+                    states[train] = kept;
+                    continue;
+                }
                 TrainOrder order = orders[i];
                 var state = new DispatchState { Order = order, RouteLength = route.Entries.Count };
                 if (order.HoldAt >= 0 && order.HoldAt < route.Entries.Count)
@@ -188,29 +236,104 @@ namespace SmartTrains.Dispatch
                     state.BlockedLane = route.Entries[order.BlockedAt].Lane;
                 if (order.WaitingFor != 0)
                     state.WaitingFor = EntityKey.ToEntity(order.WaitingFor);
-                m_States[train] = state;
+                states[train] = state;
             }
+            m_States.Clear();
+            foreach (KeyValuePair<Entity, DispatchState> entry in states)
+                m_States[entry.Key] = entry.Value;
+
+            var gone = new List<Entity>();
+            foreach (Entity train in m_LastRoutes.Keys)
+            {
+                if (!states.ContainsKey(train))
+                    gone.Add(train);
+            }
+            foreach (Entity train in gone)
+                m_LastRoutes.Remove(train);
+
             BreakWaitingCircles();
             ReleaseLongHolds(frame);
+        }
+
+        /// <summary>Each train's last route read while it was not being replaced.</summary>
+        private readonly Dictionary<Entity, TrainRoute> m_LastRoutes = new Dictionary<Entity, TrainRoute>();
+
+        /// <summary>
+        /// The route to dispatch a train with whose route the game is
+        /// replacing: its last known route from where its front is now. Its
+        /// navigation lanes are cleared or about to change, and dispatching it
+        /// with only the lane under it would drop its grant; other trains
+        /// could then be granted track it needs, and the game would reserve
+        /// that track for it anyway once the new route is in. Holding on to
+        /// the old grant until the next ordinary round costs nothing.
+        /// </summary>
+        private TrainRoute RouteWhileReplaced(Entity train, TrainRoute fresh)
+        {
+            var kept = new TrainRoute { FrontRemaining = fresh.FrontRemaining };
+            kept.Occupied.AddRange(fresh.Occupied);
+            int from = -1;
+            if (m_LastRoutes.TryGetValue(train, out TrainRoute last))
+                from = last.Entries.FindIndex(e => e.Lane == fresh.Entries[0].Lane);
+            if (from >= 0)
+            {
+                kept.Moves.AddRange(last.Moves.GetRange(from, last.Moves.Count - from));
+                kept.Entries.AddRange(last.Entries.GetRange(from, last.Entries.Count - from));
+            }
+            else
+            {
+                kept.Moves.Add(fresh.Moves[0]);
+                kept.Entries.Add(fresh.Entries[0]);
+            }
+            return kept;
         }
 
         /// <summary>Trains already reported as held too long, so each is written to the log once.</summary>
         private readonly HashSet<Entity> m_LoggedLongHolds = new HashSet<Entity>();
 
-        /// <summary>Lets go of trains held longer than <see cref="kMaxHoldMinutes"/>, and says why they were held.</summary>
+        /// <summary>Since which simulation frame the dispatcher has been holding each train, without a break.</summary>
+        private readonly Dictionary<Entity, uint> m_HeldSince = new Dictionary<Entity, uint>();
+
+        /// <summary>
+        /// Lets go of trains held longer than <see cref="kMaxHoldMinutes"/>,
+        /// and says why they were held. What counts is how long the
+        /// dispatcher has held the train, not how long it has stood: a train
+        /// that stood in a jam before the dispatcher came to it has not been
+        /// held by it.
+        /// </summary>
         private void ReleaseLongHolds(uint frame)
         {
+            var stillHeld = new List<Entity>();
             foreach (KeyValuePair<Entity, DispatchState> entry in m_States)
             {
-                DispatchState state = entry.Value;
-                if (state.HoldLane == Entity.Null || m_TrainsUI.StandingMinutes(entry.Key, frame) < kMaxHoldMinutes)
+                if (entry.Value.Holding)
+                    stillHeld.Add(entry.Key);
+            }
+            var ended = new List<Entity>();
+            foreach (Entity train in m_HeldSince.Keys)
+            {
+                if (!stillHeld.Contains(train))
+                    ended.Add(train);
+            }
+            foreach (Entity train in ended)
+                m_HeldSince.Remove(train);
+            foreach (Entity train in stillHeld)
+            {
+                if (!m_HeldSince.ContainsKey(train))
+                    m_HeldSince[train] = frame;
+            }
+
+            uint limit = (uint)(kMaxHoldMinutes * TimeSystem.kTicksPerDay / (24f * 60f));
+            foreach (Entity train in stillHeld)
+            {
+                DispatchState state = m_States[train];
+                if (frame - m_HeldSince[train] < limit)
                     continue;
                 state.HoldLane = Entity.Null;
                 state.Released = true;
-                if (Active && m_LoggedLongHolds.Add(entry.Key))
+                if (Active && m_LoggedLongHolds.Add(train))
                 {
                     string by = state.WaitingFor != Entity.Null ? $"#{state.WaitingFor.Index}" : "nobody known";
-                    Mod.Log.Info($"Train #{entry.Key.Index} held for over {kMaxHoldMinutes:0} min ({state.Order.Reason} by {by} at lane #{state.BlockedLane.Index}); the dispatcher lets it go.");
+                    Mod.Log.Info($"Train #{train.Index} held for over {kMaxHoldMinutes:0} min ({state.Order.Reason} by {by} at lane #{state.BlockedLane.Index}); the dispatcher lets it go.");
                 }
             }
             if (m_LoggedLongHolds.Count > 500)
@@ -236,7 +359,7 @@ namespace SmartTrains.Dispatch
             {
                 Entity train = entry.Key;
                 DispatchState state = entry.Value;
-                if (state.HoldLane != Entity.Null && state.WaitingFor != Entity.Null)
+                if (state.Holding && state.WaitingFor != Entity.Null)
                 {
                     waits[EntityKey.Of(train)] = EntityKey.Of(state.WaitingFor);
                     continue;
@@ -257,7 +380,7 @@ namespace SmartTrains.Dispatch
                 foreach (long key in circle)
                 {
                     Entity train = EntityKey.ToEntity(key);
-                    if (m_States.TryGetValue(train, out DispatchState state) && state.HoldLane != Entity.Null && state.Order.Rank > best)
+                    if (m_States.TryGetValue(train, out DispatchState state) && state.Holding && state.Order.Rank > best)
                     {
                         best = state.Order.Rank;
                         release = train;
@@ -300,17 +423,13 @@ namespace SmartTrains.Dispatch
             if (!em.HasComponent<TrainCurrentLane>(train))
                 return null;
 
-            // A train whose route the game is replacing keeps only what it
-            // stands on; its navigation lanes are about to be rebuilt.
             route = RouteReader.Read(em, network, train);
             if (route.Moves.Count == 0)
                 return null;
             if (HoldActuator.RouteInFlux(em, train))
-            {
-                route.Moves.RemoveRange(1, route.Moves.Count - 1);
-                route.Entries.RemoveRange(1, route.Entries.Count - 1);
-                route.Committed = 0;
-            }
+                route = RouteWhileReplaced(train, route);
+            else
+                m_LastRoutes[train] = route;
 
             var input = new TrainInput
             {
