@@ -52,6 +52,40 @@ namespace SmartTrains.Core.Network
         public long Station;
     }
 
+    public enum GroupKind
+    {
+        /// <summary>At least two sections a train can take in the same direction, outside a station.</summary>
+        PassingLoop,
+
+        /// <summary>Platform tracks of one station.</summary>
+        Station,
+
+        /// <summary>One section per direction: a train has no choice.</summary>
+        DoubleTrack,
+    }
+
+    public struct LayoutSummary
+    {
+        public int Lanes;
+        public int Sections;
+
+        /// <summary>Two-way sections without a parallel: a train on it blocks the other direction.</summary>
+        public int SingleTrackSections;
+
+        public float SingleTrackLength;
+        public int JunctionAreas;
+        public int PassingLoops;
+        public int StationGroups;
+        public int DoubleTracks;
+
+        public override string ToString()
+        {
+            return $"{Lanes} track lanes in {Sections} sections and {JunctionAreas} junction areas; "
+                + $"{SingleTrackSections} single-track sections ({SingleTrackLength / 1000f:0.0} km), "
+                + $"{PassingLoops} passing loops, {StationGroups} station track groups, {DoubleTracks} double-track stretches";
+        }
+    }
+
     /// <summary>
     /// The track network divided into what a dispatcher reasons about:
     /// sections where trains run and wait, junction areas they must never
@@ -311,6 +345,50 @@ namespace SmartTrains.Core.Network
                 group.Station = station;
                 m_Groups.Add(group);
             }
+        }
+
+        /// <summary>What kind of place a parallel group is, for the log and the panel.</summary>
+        public GroupKind KindOf(ParallelGroup group)
+        {
+            if (group.Station != 0)
+                return GroupKind.Station;
+            int most = System.Math.Max(Alternatives(group, group.AreaA).Count, Alternatives(group, group.AreaB).Count);
+            return most >= 2 ? GroupKind.PassingLoop : GroupKind.DoubleTrack;
+        }
+
+        /// <summary>Counts for the log, to check the division against what the player built.</summary>
+        public LayoutSummary Summarize()
+        {
+            var summary = new LayoutSummary
+            {
+                Lanes = Network.Lanes.Count,
+                Sections = m_Sections.Count,
+                JunctionAreas = m_Areas.Count,
+            };
+            foreach (Section section in m_Sections)
+            {
+                if (section.TwoWay && GroupOf(section.Id) < 0)
+                {
+                    summary.SingleTrackSections++;
+                    summary.SingleTrackLength += section.Length;
+                }
+            }
+            foreach (ParallelGroup group in m_Groups)
+            {
+                switch (KindOf(group))
+                {
+                    case GroupKind.PassingLoop:
+                        summary.PassingLoops++;
+                        break;
+                    case GroupKind.Station:
+                        summary.StationGroups++;
+                        break;
+                    default:
+                        summary.DoubleTracks++;
+                        break;
+                }
+            }
+            return summary;
         }
 
         /// <summary>

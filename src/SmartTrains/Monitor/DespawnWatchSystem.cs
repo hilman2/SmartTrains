@@ -221,10 +221,10 @@ namespace SmartTrains.Monitor
                 Resource = row.MainResource ?? "",
             };
 
-            BlockerChain chain = BlockerChains.Follow(TrainReader.Key(train), key => TrainDiagnosis.BlockerOf(em, key));
+            BlockerChain chain = BlockerChains.Follow(EntityKey.Of(train), key => TrainDiagnosis.BlockerOf(em, key));
             foreach (long key in chain.Trains)
             {
-                Entity other = TrainReader.EntityOf(key);
+                Entity other = EntityKey.ToEntity(key);
                 string line = em.TryGetComponent(other, out Game.Routes.CurrentRoute otherRoute) ? NameText.Of(m_NameSystem, em, otherRoute.m_Route) : "";
                 record.Chain.Add((other.Index, line));
             }

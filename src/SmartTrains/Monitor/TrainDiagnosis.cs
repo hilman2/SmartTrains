@@ -29,7 +29,7 @@ namespace SmartTrains.Monitor
         {
             if (!em.Exists(train))
                 return;
-            BlockerChain chain = BlockerChains.Follow(TrainReader.Key(train), key => BlockerOf(em, key));
+            BlockerChain chain = BlockerChains.Follow(EntityKey.Of(train), key => BlockerOf(em, key));
 
             var text = new StringBuilder();
             text.Append($"Diagnosis of train #{train.Index}, waiting chain of {chain.Trains.Count} train(s)");
@@ -39,7 +39,7 @@ namespace SmartTrains.Monitor
             foreach (long key in chain.Trains)
             {
                 text.AppendLine("  waits for:");
-                Describe(text, em, names, reader, TrainReader.EntityOf(key), frame, kLanesChain);
+                Describe(text, em, names, reader, EntityKey.ToEntity(key), frame, kLanesChain);
             }
             Mod.Log.Info(text.ToString());
         }
@@ -47,11 +47,11 @@ namespace SmartTrains.Monitor
         /// <summary>The key of the train the given train waits for, or 0; the signature <see cref="BlockerChains.Follow"/> asks for.</summary>
         public static long BlockerOf(EntityManager em, long key)
         {
-            Entity train = TrainReader.EntityOf(key);
+            Entity train = EntityKey.ToEntity(key);
             if (!em.Exists(train) || !em.TryGetComponent(train, out Blocker blocker))
                 return 0;
             Entity other = TrainReader.TrainOf(em, blocker.m_Blocker);
-            return other == Entity.Null ? 0 : TrainReader.Key(other);
+            return other == Entity.Null ? 0 : EntityKey.Of(other);
         }
 
         private static void Describe(StringBuilder text, EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame, int laneCount)

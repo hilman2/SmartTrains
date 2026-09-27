@@ -164,7 +164,7 @@ namespace SmartTrains.Monitor
             if (row.Reason == WaitReason.TrainAhead || row.Reason == WaitReason.CrossingTrain || row.Reason == WaitReason.OncomingTrain)
                 row.Blocker = blockingTrain;
 
-            uint frames = m_Clock.Observe(Key(train), !row.Moving, frame);
+            uint frames = m_Clock.Observe(EntityKey.Of(train), !row.Moving, frame);
             row.StandingMinutes = ToMinutes(frames);
 
             ReadLoad(em, train, row);
@@ -178,18 +178,7 @@ namespace SmartTrains.Monitor
         /// </summary>
         public float StandingMinutes(Entity train, uint frame)
         {
-            return m_Clock.TryGetSince(Key(train), out uint since) ? ToMinutes(frame - since) : 0f;
-        }
-
-        /// <summary>A train's key for the core's bookkeeping; <see cref="EntityOf"/> turns it back.</summary>
-        public static long Key(Entity train)
-        {
-            return ((long)train.Index << 32) | (uint)train.Version;
-        }
-
-        public static Entity EntityOf(long key)
-        {
-            return new Entity { Index = (int)(key >> 32), Version = (int)(key & 0xffffffffL) };
+            return m_Clock.TryGetSince(EntityKey.Of(train), out uint since) ? ToMinutes(frame - since) : 0f;
         }
 
         private static float ToMinutes(uint frames)

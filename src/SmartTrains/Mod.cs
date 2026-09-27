@@ -23,6 +23,7 @@ namespace SmartTrains
             // Removed trains still exist during the modification phases of
             // the frame after their removal; see DespawnWatchSystem.
             updateSystem.UpdateAt<Monitor.DespawnWatchSystem>(SystemUpdatePhase.Modification1);
+            updateSystem.UpdateAt<Network.NetworkSystem>(SystemUpdatePhase.ModificationEnd);
         }
 
         public void OnDispose()

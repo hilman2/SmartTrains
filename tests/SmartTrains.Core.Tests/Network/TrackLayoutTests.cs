@@ -131,6 +131,27 @@ namespace SmartTrains.Core.Tests.Network
             Assert.Equal(0, Assert.Single(layout.Groups).Station);
         }
 
+        [Fact]
+        public void TheSummaryCountsTheLoopAndItsSingleTrackApproaches()
+        {
+            var (b, _) = TrackBuilder.PassingLoop();
+            LayoutSummary summary = new TrackLayout(b.Build()).Summarize();
+            Assert.Equal(8, summary.Lanes);
+            Assert.Equal(2, summary.SingleTrackSections);
+            Assert.Equal(200f, summary.SingleTrackLength, 1);
+            Assert.Equal(1, summary.PassingLoops);
+            Assert.Equal(0, summary.StationGroups);
+            Assert.Equal(0, summary.DoubleTracks);
+        }
+
+        [Fact]
+        public void OneWayApproachesAreNoSingleTrack()
+        {
+            var (b, _) = TrackBuilder.PassingLoop(twoWay: false);
+            LayoutSummary summary = new TrackLayout(b.Build()).Summarize();
+            Assert.Equal(0, summary.SingleTrackSections);
+        }
+
         private static LaneInput WithStation(LaneInput lane, long station)
         {
             lane.Station = station;
