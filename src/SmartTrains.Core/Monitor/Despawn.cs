@@ -59,7 +59,10 @@ namespace SmartTrains.Core.Monitor
                 return DespawnCause.TargetGone;
             if (train.PathFailed)
                 return DespawnCause.NoRoute;
-            if (train.EndReached && train.Through)
+            // Through traffic leaves the map over connection lanes, where the
+            // train's front no longer carries EndReached. Without a failed
+            // route or a deadlock, its removal is its arrival.
+            if (train.Through)
                 return DespawnCause.Arrived;
             if (train.EndReached && train.Returning)
                 return DespawnCause.Depot;

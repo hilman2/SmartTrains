@@ -26,6 +26,18 @@ namespace SmartTrains.Dispatch
 
         /// <summary>The train it waits for; Null if none.</summary>
         public Entity WaitingFor;
+
+        /// <summary>The lane the dispatcher found not free, for diagnosis; Null if none.</summary>
+        public Entity BlockedLane;
+
+        /// <summary>
+        /// The dispatcher would hold the train, but lets it go because the
+        /// hold closes a circle of trains waiting for each other.
+        /// </summary>
+        public bool Released;
+
+        /// <summary>Lanes in the route the dispatcher saw, for diagnosis.</summary>
+        public int RouteLength;
     }
 
     /// <summary>
@@ -42,6 +54,13 @@ namespace SmartTrains.Dispatch
     public partial class DispatchSystem : GameSystemBase
     {
         private const int kRoundInterval = 4;
+
+        /// <summary>
+        /// In-game minutes after which a held train is let go regardless. A
+        /// hold that long means the dispatcher misjudges the situation, and
+        /// the train is better off with the game's own handling.
+        /// </summary>
+        private const float kMaxHoldMinutes = 30f;
 
         // Base ranks: passengers first, then freight on a line, then through
         // traffic, which only crosses the city. Two points are one minute of
@@ -162,13 +181,112 @@ namespace SmartTrains.Dispatch
             {
                 (Entity train, TrainRoute route) = trains[i];
                 TrainOrder order = orders[i];
-                var state = new DispatchState { Order = order };
+                var state = new DispatchState { Order = order, RouteLength = route.Entries.Count };
                 if (order.HoldAt >= 0 && order.HoldAt < route.Entries.Count)
                     state.HoldLane = route.Entries[order.HoldAt].Lane;
+                if (order.BlockedAt >= 0 && order.BlockedAt < route.Entries.Count)
+                    state.BlockedLane = route.Entries[order.BlockedAt].Lane;
                 if (order.WaitingFor != 0)
                     state.WaitingFor = EntityKey.ToEntity(order.WaitingFor);
                 m_States[train] = state;
             }
+            BreakWaitingCircles();
+            ReleaseLongHolds(frame);
+        }
+
+        /// <summary>Trains already reported as held too long, so each is written to the log once.</summary>
+        private readonly HashSet<Entity> m_LoggedLongHolds = new HashSet<Entity>();
+
+        /// <summary>Lets go of trains held longer than <see cref="kMaxHoldMinutes"/>, and says why they were held.</summary>
+        private void ReleaseLongHolds(uint frame)
+        {
+            foreach (KeyValuePair<Entity, DispatchState> entry in m_States)
+            {
+                DispatchState state = entry.Value;
+                if (state.HoldLane == Entity.Null || m_TrainsUI.StandingMinutes(entry.Key, frame) < kMaxHoldMinutes)
+                    continue;
+                state.HoldLane = Entity.Null;
+                state.Released = true;
+                if (Active && m_LoggedLongHolds.Add(entry.Key))
+                {
+                    string by = state.WaitingFor != Entity.Null ? $"#{state.WaitingFor.Index}" : "nobody known";
+                    Mod.Log.Info($"Train #{entry.Key.Index} held for over {kMaxHoldMinutes:0} min ({state.Order.Reason} by {by} at lane #{state.BlockedLane.Index}); the dispatcher lets it go.");
+                }
+            }
+            if (m_LoggedLongHolds.Count > 500)
+                m_LoggedLongHolds.Clear();
+        }
+
+        /// <summary>
+        /// Lets go of holds that close a circle of waiting trains. Such a
+        /// circle can form where the dispatcher holds a train that others
+        /// need out of the way, e.g. one standing at a platform that a queue
+        /// waits to enter, while the track it would leave by is held by that
+        /// queue. It also forms from jams the city had before the dispatcher
+        /// was switched on. The game cannot see these circles: a held train
+        /// reports nothing in its way. So the dispatcher lets the train of
+        /// highest rank in the circle go and leaves it to the game, which at
+        /// worst handles it as it would without the mod.
+        /// </summary>
+        private void BreakWaitingCircles()
+        {
+            EntityManager em = EntityManager;
+            var waits = new Dictionary<long, long>();
+            foreach (KeyValuePair<Entity, DispatchState> entry in m_States)
+            {
+                Entity train = entry.Key;
+                DispatchState state = entry.Value;
+                if (state.HoldLane != Entity.Null && state.WaitingFor != Entity.Null)
+                {
+                    waits[EntityKey.Of(train)] = EntityKey.Of(state.WaitingFor);
+                    continue;
+                }
+                // Not held: the train waits for whatever the game reports in
+                // its way, if it stands.
+                if (math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity) >= 0.1f)
+                    continue;
+                Entity blocker = TrainReader.TrainOf(em, em.GetComponentData<Blocker>(train).m_Blocker);
+                if (blocker != Entity.Null && blocker != train)
+                    waits[EntityKey.Of(train)] = EntityKey.Of(blocker);
+            }
+
+            foreach (List<long> circle in WaitCycles.Find(waits))
+            {
+                Entity release = Entity.Null;
+                float best = float.MinValue;
+                foreach (long key in circle)
+                {
+                    Entity train = EntityKey.ToEntity(key);
+                    if (m_States.TryGetValue(train, out DispatchState state) && state.HoldLane != Entity.Null && state.Order.Rank > best)
+                    {
+                        best = state.Order.Rank;
+                        release = train;
+                    }
+                }
+                if (release == Entity.Null)
+                    continue;
+                DispatchState released = m_States[release];
+                released.HoldLane = Entity.Null;
+                released.Released = true;
+                LogCircle(release, circle);
+            }
+        }
+
+        /// <summary>Circles already written to the log, so a circle that lasts is not written every round.</summary>
+        private readonly HashSet<string> m_LoggedCircles = new HashSet<string>();
+
+        private void LogCircle(Entity released, List<long> circle)
+        {
+            var names = new List<string>();
+            foreach (long key in circle)
+                names.Add("#" + EntityKey.ToEntity(key).Index);
+            var sorted = new List<string>(names);
+            sorted.Sort(StringComparer.Ordinal);
+            if (!m_LoggedCircles.Add(string.Join(",", sorted)))
+                return;
+            if (m_LoggedCircles.Count > 200)
+                m_LoggedCircles.Clear();
+            Mod.Log.Info($"Waiting circle {string.Join(" -> ", names)} -> {names[0]}; the dispatcher lets #{released.Index} go.");
         }
 
         /// <summary>The dispatcher's view of one train; null for a train not on train track.</summary>

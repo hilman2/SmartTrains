@@ -92,6 +92,12 @@ namespace SmartTrains.Core.Dispatch
         /// <summary>The train it waits for, 0 if none is known.</summary>
         public long WaitingFor;
 
+        /// <summary>Index into the route of the lane that was not free, -1 if none; for diagnosis.</summary>
+        public int BlockedAt = -1;
+
+        /// <summary>Index into the route of the last lane granted to the train.</summary>
+        public int GrantedEnd;
+
         /// <summary>A new way through a passing loop, or null.</summary>
         public RouteChange Change;
 
@@ -190,9 +196,14 @@ namespace SmartTrains.Core.Dispatch
                 }
                 routes[train.Id] = route;
                 granted[train.Id] = end;
+                order.GrantedEnd = end;
                 order.HoldAt = end < route.Count - 1 ? end + 1 : -1;
                 if (order.HoldAt < 0)
+                {
                     order.Reason = HoldReason.None;
+                    order.WaitingFor = 0;
+                    order.BlockedAt = -1;
+                }
             }
 
             m_GrantedEnd.Clear();
@@ -283,6 +294,7 @@ namespace SmartTrains.Core.Dispatch
             }
             HoldReason reason = order.Reason;
             long waitingFor = order.WaitingFor;
+            int blockedAt = order.BlockedAt;
 
             if (train.MayChangeTrack && order.Change == null && TryOtherTrack(train, route, end, last, holdings, out RouteChange change))
             {
@@ -298,6 +310,7 @@ namespace SmartTrains.Core.Dispatch
                     order.Change = change;
                     order.Reason = HoldReason.None;
                     order.WaitingFor = 0;
+                    order.BlockedAt = -1;
                     route = changed;
                     end = newLast;
                     return true;
@@ -306,6 +319,7 @@ namespace SmartTrains.Core.Dispatch
 
             order.Reason = reason;
             order.WaitingFor = waitingFor;
+            order.BlockedAt = blockedAt;
             Claim(train, route, end + 1, last, holdings);
             return false;
         }
@@ -365,11 +379,11 @@ namespace SmartTrains.Core.Dispatch
                 if (section < 0)
                 {
                     if (HeldByOther(holdings, lane, train.Id, out long holder))
-                        return Refuse(order, HoldReason.TrackHeld, holder);
+                        return Refuse(order, HoldReason.TrackHeld, holder, i);
                     foreach (int other in m_Network.Overlaps(lane))
                     {
                         if (HeldByOther(holdings, other, train.Id, out holder))
-                            return Refuse(order, HoldReason.TrackHeld, holder);
+                            return Refuse(order, HoldReason.TrackHeld, holder, i);
                     }
                     continue;
                 }
@@ -377,20 +391,25 @@ namespace SmartTrains.Core.Dispatch
                     continue;
                 bool forward = SectionForward(section, route[i]);
                 if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward)
-                    return Refuse(order, HoldReason.GivingWay, claim.Train);
+                    return Refuse(order, HoldReason.GivingWay, claim.Train, i);
                 if (!holdings.Sections.TryGetValue(section, out List<(long Train, bool Forward, float Length)> users))
                     continue;
                 float used = 0f;
+                long last = 0;
                 foreach ((long Train, bool Forward, float Length) user in users)
                 {
                     if (user.Train == train.Id)
                         continue;
                     if (user.Forward != forward)
-                        return Refuse(order, HoldReason.TrackHeld, user.Train);
+                        return Refuse(order, HoldReason.TrackHeld, user.Train, i);
                     used += user.Length + kMargin;
+                    last = user.Train;
                 }
-                if (section == lastSection && used + train.Length > m_Layout.Sections[section].Length && users.Count > 0)
-                    return Refuse(order, HoldReason.NoRoomAhead, users[users.Count - 1].Train);
+                // Room is short only because of other trains. A section at the
+                // end of a route may be shorter than the train, e.g. a short
+                // platform; with no one else in it the train may still go.
+                if (section == lastSection && last != 0 && used + train.Length > m_Layout.Sections[section].Length)
+                    return Refuse(order, HoldReason.NoRoomAhead, last, i);
             }
             return true;
         }
@@ -400,10 +419,11 @@ namespace SmartTrains.Core.Dispatch
             return holdings.Lanes.TryGetValue(lane, out holder) && holder != train;
         }
 
-        private static bool Refuse(TrainOrder order, HoldReason reason, long holder)
+        private static bool Refuse(TrainOrder order, HoldReason reason, long holder, int at)
         {
             order.Reason = reason;
             order.WaitingFor = holder;
+            order.BlockedAt = at;
             return false;
         }
 

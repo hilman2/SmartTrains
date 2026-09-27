@@ -32,6 +32,14 @@ namespace SmartTrains.Core.Tests.Monitor
         }
 
         [Fact]
+        public void ThroughTrafficLeavingOverAConnectionLaneArrivedNormally()
+        {
+            DespawnObservation train = Alive();
+            train.Through = true;
+            Assert.Equal(DespawnCause.Arrived, DespawnClassifier.Classify(train));
+        }
+
+        [Fact]
         public void ThroughTrafficRemovedOnTheWayIsNotNormal()
         {
             // Through traffic without a route is removed where it stands. That

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 using Colossal.Entities;
 using Game.Common;
@@ -25,21 +26,33 @@ namespace SmartTrains.Monitor
         /// <summary>Navigation lanes listed for each train further along the chain.</summary>
         private const int kLanesChain = 6;
 
-        public static void Write(EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame)
+        /// <param name="dispatch">The dispatcher's last decision per train.</param>
+        /// <param name="dispatcherActive">Whether the dispatcher holds trains, or only plans.</param>
+        public static void Write(EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame,
+            IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch, bool dispatcherActive)
         {
             if (!em.Exists(train))
                 return;
-            BlockerChain chain = BlockerChains.Follow(EntityKey.Of(train), key => BlockerOf(em, key));
+            // A train the dispatcher holds reports nothing in its way; the
+            // chain follows the train the dispatcher holds it for instead.
+            BlockerChain chain = BlockerChains.Follow(EntityKey.Of(train), key =>
+            {
+                Entity t = EntityKey.ToEntity(key);
+                if (dispatcherActive && dispatch.TryGetValue(t, out Dispatch.DispatchState s) && s.HoldLane != Entity.Null && s.WaitingFor != Entity.Null)
+                    return EntityKey.Of(s.WaitingFor);
+                return BlockerOf(em, key);
+            });
 
             var text = new StringBuilder();
             text.Append($"Diagnosis of train #{train.Index}, waiting chain of {chain.Trains.Count} train(s)");
             text.Append(chain.BackToStart ? ", leading back to it (deadlock)." : ".");
+            text.Append(dispatcherActive ? " Dispatcher on." : " Dispatcher off, only planning.");
             text.AppendLine();
-            Describe(text, em, names, reader, train, frame, kLanesFirst);
+            Describe(text, em, names, reader, train, frame, kLanesFirst, dispatch);
             foreach (long key in chain.Trains)
             {
                 text.AppendLine("  waits for:");
-                Describe(text, em, names, reader, EntityKey.ToEntity(key), frame, kLanesChain);
+                Describe(text, em, names, reader, EntityKey.ToEntity(key), frame, kLanesChain, dispatch);
             }
             Mod.Log.Info(text.ToString());
         }
@@ -54,7 +67,8 @@ namespace SmartTrains.Monitor
             return other == Entity.Null ? 0 : EntityKey.Of(other);
         }
 
-        private static void Describe(StringBuilder text, EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame, int laneCount)
+        private static void Describe(StringBuilder text, EntityManager em, NameSystem names, TrainReader reader, Entity train, uint frame, int laneCount,
+            IReadOnlyDictionary<Entity, Dispatch.DispatchState> dispatch)
         {
             if (!em.Exists(train))
             {
@@ -78,6 +92,8 @@ namespace SmartTrains.Monitor
                 Entity target = em.TryGetComponent(train, out Target t) ? t.m_Target : Entity.Null;
                 text.AppendLine($"    path: {pathOwner.m_State}, element {pathOwner.m_ElementIndex} of {length}, target #{target.Index} ({NameText.Of(names, em, target)})");
             }
+            if (dispatch.TryGetValue(train, out Dispatch.DispatchState state))
+                text.AppendLine("    " + DescribeDispatch(em, state));
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))
                 text.AppendLine($"    passenger service: {passenger.m_State}, departure frame {passenger.m_DepartureFrame} (now {frame})");
             if (em.TryGetComponent(train, out Game.Vehicles.CargoTransport cargo))
@@ -94,6 +110,25 @@ namespace SmartTrains.Monitor
                 for (int i = 0; i < lanes.Length && i < laneCount; i++)
                     text.AppendLine($"      {i + 1}. {Lane(em, lanes[i].m_Lane)}, flags {lanes[i].m_Flags}");
             }
+        }
+
+        /// <summary>The dispatcher's decision on a train in one line: rank, where it holds it, and what it found not free.</summary>
+        private static string DescribeDispatch(EntityManager em, Dispatch.DispatchState state)
+        {
+            var text = new StringBuilder($"dispatcher: rank {state.Order.Rank:0}, granted up to route lane {state.Order.GrantedEnd} of {state.RouteLength}");
+            if (state.Released)
+                text.Append(", would hold it but lets it go: the hold closes a waiting circle");
+            else if (state.HoldLane == Entity.Null)
+                text.Append(", lets it run");
+            else
+                text.Append($", holds it before lane #{state.HoldLane.Index} (route lane {state.Order.HoldAt})");
+            if (state.Order.Reason != Core.Dispatch.HoldReason.None)
+            {
+                string by = state.WaitingFor != Entity.Null ? $"train #{state.WaitingFor.Index}" : "nobody known";
+                string where = state.BlockedLane != Entity.Null ? $" on {Lane(em, state.BlockedLane)} (route lane {state.Order.BlockedAt})" : "";
+                text.Append($"; {state.Order.Reason} by {by}{where}");
+            }
+            return text.ToString();
         }
 
         /// <summary>

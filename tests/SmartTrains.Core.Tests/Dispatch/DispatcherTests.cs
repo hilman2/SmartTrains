@@ -115,6 +115,33 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void ATrainNeverWaitsForItselfAtAShortPlatform()
+        {
+            // A 100 m platform section of two lanes at the end of the route.
+            // The 400 m train stands with its front on the first lane and
+            // needs the second. Nobody else is there, so it must be let on.
+            var b = new TrackBuilder().Point("A", 0, 0).Point("B", 50, 0).Point("C", 100, 0);
+            long first = b.Lane("A", "B", twoWay: false);
+            long second = b.Lane("B", "C", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+            TrainInput train = Train(1, 10, M(n, first, true), M(n, second, true));
+            train.Length = 400f;
+            TrainOrder order = Assert.Single(d.Dispatch(new[] { train }));
+            Assert.Equal(-1, order.HoldAt);
+        }
+
+        [Fact]
+        public void TheRefusedLaneIsReported()
+        {
+            var (n, l, d) = Loop();
+            List<TrainOrder> orders = d.Dispatch(new[] { Train(1, 20, East(n, l)), Train(2, 10, West(n, l)) });
+            // Train 1 is refused at the single track S2, index 4 of its route.
+            Assert.Equal(4, Order(orders, 1).BlockedAt);
+            Assert.Equal(2, Order(orders, 1).GrantedEnd);
+        }
+
+        [Fact]
         public void AGrantIsNeverTakenBack()
         {
             var (n, l, d) = Loop();
