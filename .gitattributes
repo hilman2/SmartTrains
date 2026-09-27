@@ -1,0 +1,5 @@
+# Keep LF everywhere. The build and test scripts run in Linux containers,
+# where a CRLF checkout breaks them.
+* text=auto eol=lf
+*.png binary
+*.dll binary

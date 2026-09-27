@@ -1,0 +1,26 @@
+# Builds the in-game panel (src/SmartTrains.UI) in a pinned Node image.
+#
+#   docker compose -f build/docker/compose.yml run --rm ui
+#
+# The repository is mounted read-only; npm works in a tmpfs. Results land in
+# src/SmartTrains.UI/build: dist/ holds SmartTrains.mjs and SmartTrains.css,
+# which the C# build copies next to SmartTrains.dll, and package-lock.json is
+# the resolved dependency set.
+services:
+  ui:
+    image: node:22.21.0-bookworm-slim
+    user: "1000:1000"
+    read_only: true
+    working_dir: /tmp
+    volumes:
+      - ../..:/src:ro
+      - ../../src/SmartTrains.UI/build:/out
+    tmpfs:
+      - /tmp:exec,size=2g
+    environment:
+      HOME: /tmp
+      npm_config_cache: /tmp/npm-cache
+      npm_config_update_notifier: "false"
+      npm_config_fund: "false"
+      npm_config_audit: "false"
+    entrypoint: ["sh", "/src/build/docker/build-ui.sh"]

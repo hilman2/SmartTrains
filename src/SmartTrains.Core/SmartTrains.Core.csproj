@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Train dispatching logic without any game or Unity dependency.
+       The mod compiles these sources into its own assembly (see src/SmartTrains/SmartTrains.csproj);
+       this project exists so the logic can be built and tested on its own. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>SmartTrains.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

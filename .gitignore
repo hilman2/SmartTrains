@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+Logs/
+Library/
+node_modules/
+src/SmartTrains/Local.props
+src/SmartTrains.UI/build/

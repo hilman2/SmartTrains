@@ -1,0 +1,16 @@
+<Project>
+  <Target Name="CheckManagedPath" BeforeTargets="BeforeBuild">
+    <Error Condition="!Exists('$(ManagedPath)\Game.dll')"
+           Text="Game.dll not found in '$(ManagedPath)'. Set ManagedPath in src/SmartTrains/Local.props (see Standalone.props)." />
+  </Target>
+
+  <!-- Copies the build to the game's local Mods folder, like the toolchain's DeployWIP target.
+       The game must not be running, or the DLL is locked. Skip with -p:DeployMod=false. -->
+  <Target Name="DeployLocal" AfterTargets="Build" Condition="'$(DeployMod)' != 'false'">
+    <ItemGroup>
+      <FilesToDeploy Include="$(OutDir)**\*.*" />
+    </ItemGroup>
+    <Message Text="Deploying to $(DeployDir)" Importance="high" />
+    <Copy SourceFiles="@(FilesToDeploy)" DestinationFiles="@(FilesToDeploy->'$(DeployDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+</Project>

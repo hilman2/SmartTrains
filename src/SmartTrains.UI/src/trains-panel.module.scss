@@ -1,0 +1,269 @@
+// Sizes in rem follow the game's UI scale. Every container states its flex
+// direction; the game's layout engine does not wrap inline text like a
+// browser (see trains-panel.tsx).
+
+$moving: #3dbf6b;
+$platform: #8fd3ff;
+$standing: #f5b83d;
+$alarm: #e5484d;
+
+.panel {
+  position: absolute;
+  top: 120rem;
+  left: 20rem;
+  width: 480rem;
+}
+
+.title {
+  font-weight: bold;
+}
+
+.summary {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 8rem 12rem 2rem 12rem;
+}
+
+.summaryText {
+  flex: 1;
+  font-size: 14rem;
+  opacity: 0.85;
+}
+
+.summaryAlarm {
+  flex-shrink: 0;
+  padding: 2rem 8rem;
+  font-size: 13rem;
+  font-weight: bold;
+  color: #ffffff;
+  background-color: rgba(229, 72, 77, 0.6);
+}
+
+.filters {
+  display: flex;
+  flex-direction: row;
+  padding: 6rem 9rem 4rem 9rem;
+}
+
+.filter {
+  flex: 1;
+  margin: 0 3rem;
+  padding: 5rem 4rem;
+  white-space: nowrap;
+  font-size: 13rem;
+  justify-content: center;
+  opacity: 0.7;
+}
+
+.filterActive {
+  opacity: 1;
+  font-weight: bold;
+}
+
+.filterAlarm {
+  color: $alarm;
+}
+
+.scroll {
+  max-height: 720rem;
+}
+
+.empty {
+  padding: 16rem 12rem;
+  opacity: 0.7;
+  font-size: 14rem;
+}
+
+.grow {
+  flex: 1;
+}
+
+// ---- Cards ----
+
+.card {
+  display: flex;
+  flex-direction: column;
+  margin: 4rem 10rem;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.cardAlarm {
+  background-color: rgba(229, 72, 77, 0.18);
+}
+
+// The game's buttons centre their content; the rows of a card read from
+// the left.
+.cardMain {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  text-align: left;
+  width: 100%;
+  padding: 6rem 8rem;
+}
+
+.lineRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+}
+
+.swatch {
+  width: 6rem;
+  height: 16rem;
+  margin-right: 8rem;
+  flex-shrink: 0;
+}
+
+.lineName {
+  flex: 1;
+  text-align: left;
+  font-weight: bold;
+  font-size: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trainId {
+  flex-shrink: 0;
+  padding-left: 8rem;
+  font-size: 12rem;
+  opacity: 0.55;
+}
+
+.statusRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  padding-top: 4rem;
+}
+
+.dot {
+  width: 10rem;
+  height: 10rem;
+  border-radius: 5rem;
+  margin-right: 8rem;
+  flex-shrink: 0;
+}
+
+.dotMoving {
+  background-color: $moving;
+}
+
+.dotPlatform {
+  background-color: $platform;
+}
+
+.dotStanding {
+  background-color: $standing;
+}
+
+.dotAlarm {
+  background-color: $alarm;
+}
+
+.statusText {
+  flex: 1;
+  text-align: left;
+  font-size: 13rem;
+}
+
+.routeRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  padding-top: 3rem;
+  font-size: 13rem;
+  opacity: 0.75;
+}
+
+.place {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arrow {
+  flex-shrink: 0;
+  padding: 0 6rem;
+}
+
+.loadRow {
+  width: 100%;
+  text-align: left;
+  padding-top: 3rem;
+  font-size: 12rem;
+  opacity: 0.65;
+}
+
+.chainRow {
+  width: 100%;
+  text-align: left;
+  padding-top: 3rem;
+  font-size: 12rem;
+  color: $standing;
+}
+
+// ---- Below a standing train: who it waits for, and the diagnosis ----
+
+.actionRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 0 4rem 4rem 4rem;
+}
+
+.blocker {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 3rem 4rem 3rem 22rem;
+  font-size: 12rem;
+  color: $standing;
+}
+
+.blockerText {
+  flex-shrink: 0;
+  padding-right: 6rem;
+}
+
+.blockerLine {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.diagnose {
+  flex-shrink: 0;
+  padding: 3rem 8rem;
+  font-size: 12rem;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+// ---- Removed trains ----
+
+.removedNote {
+  padding: 8rem 12rem 4rem 12rem;
+  font-size: 12rem;
+  opacity: 0.7;
+}
+
+.tooltip {
+  max-width: 360rem;
+  font-size: 13rem;
+  white-space: pre-line;
+}

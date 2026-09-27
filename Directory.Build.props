@@ -1,0 +1,10 @@
+<Project>
+  <!-- The game's toolchain compiles mods as C# 9 against .NET Framework 4.8 (see Mod.props).
+       SmartTrains.Core is shared with the mod as source, so it is held to the same language level. -->
+  <PropertyGroup>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

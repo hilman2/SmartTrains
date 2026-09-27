@@ -1,0 +1,40 @@
+<Project>
+  <!--
+    Build settings when the game's modding toolchain is not installed.
+    Mirrors what the toolchain's Mod.props sets.
+
+    The game's Managed folder is found in this order:
+      1. ManagedPath passed on the command line or set in Local.props
+      2. the CSII_MANAGEDPATH user environment variable (set by the toolchain)
+      3. the default Steam library
+    Local.props sits next to this file, is not committed, and may contain e.g.
+      <Project><PropertyGroup>
+        <ManagedPath>D:\SteamLibrary\steamapps\common\Cities Skylines II\Cities2_Data\Managed</ManagedPath>
+      </PropertyGroup></Project>
+  -->
+  <Import Project="Local.props" Condition="Exists('Local.props')" />
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(ManagedPath)' == ''">
+    <ManagedPath>$([System.Environment]::GetEnvironmentVariable('CSII_MANAGEDPATH', 'EnvironmentVariableTarget.User'))</ManagedPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ManagedPath)' == '' Or !Exists('$(ManagedPath)\Game.dll')">
+    <ManagedPath>C:\Program Files (x86)\Steam\steamapps\common\Cities Skylines II\Cities2_Data\Managed</ManagedPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <AssemblySearchPaths>$(AssemblySearchPaths);$(ManagedPath)</AssemblySearchPaths>
+    <UserDataPath Condition="'$(UserDataPath)' == ''">$(USERPROFILE)\AppData\LocalLow\Colossal Order\Cities Skylines II</UserDataPath>
+    <DeployDir>$(UserDataPath)\Mods\$(AssemblyName)</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

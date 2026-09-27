@@ -1,0 +1,8 @@
+{
+  "gameVersion": "1.6.2f1",
+  "source": "Cities2_Data/Content/Game/UI/index.js, the export maps assigned to window[\"cs2/...\"]",
+  "cs2/api": ["bindEvent", "bindLocalValue", "bindMap", "bindTrigger", "bindTriggerWithArgs", "bindValue", "call", "trigger", "useMapValue", "useMapValueOnChange", "useMapValues", "useReducedValue", "useValue", "useValueOnChange", "useValueRef"],
+  "cs2/l10n": ["Localized", "LocalizedBounds", "LocalizedDate", "LocalizedDuration", "LocalizedEntityName", "LocalizedFraction", "LocalizedNumber", "LocalizedPercentage", "LocalizedString", "Unit", "useLocalization"],
+  "cs2/ui": ["Button", "ConfirmationDialog", "DialogContext", "DialogRenderer", "DialogStack", "Dropdown", "DropdownItem", "DropdownToggle", "FloatingButton", "FormattedParagraphs", "FormattedText", "Icon", "MarkdownRenderer", "MarkupRenderer", "MenuButton", "Panel", "PanelFoldout", "PanelSection", "PanelSectionRow", "Portal", "Scrollable", "Tooltip"],
+  "cs2/modding": ["findModule", "getModule"]
+}

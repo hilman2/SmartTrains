@@ -1,0 +1,31 @@
+# Runs the SmartTrains.Core test suite in a pinned SDK image.
+#
+#   docker compose -f tests/docker/compose.yml run --rm tests
+#   docker compose -f tests/docker/compose.yml run --rm tests-live   (verbose, one line per test)
+#
+# The repository is mounted read-only. Everything the build writes, including
+# the NuGet cache, goes to a tmpfs under /tmp.
+x-test: &test
+  image: mcr.microsoft.com/dotnet/sdk:8.0.414-noble
+  user: "1000:1000"
+  read_only: true
+  working_dir: /src
+  volumes:
+    - ../..:/src:ro
+  tmpfs:
+    - /tmp:exec,size=2g
+  environment:
+    HOME: /tmp
+    DOTNET_CLI_HOME: /tmp
+    NUGET_PACKAGES: /tmp/nuget
+    DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+    DOTNET_NOLOGO: "1"
+  entrypoint: ["sh", "/src/tests/docker/run-tests.sh"]
+
+services:
+  tests:
+    <<: *test
+    command: ["minimal"]
+  tests-live:
+    <<: *test
+    command: ["detailed"]

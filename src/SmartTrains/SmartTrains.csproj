@@ -1,0 +1,121 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <AssemblyName>SmartTrains</AssemblyName>
+    <RootNamespace>SmartTrains</RootNamespace>
+    <Configurations>Debug;Release</Configurations>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!--
+    Two ways to build:
+
+    With the game's modding toolchain installed (Options > Modding in the game),
+    CSII_TOOLPATH points at the official Mod.props and Mod.targets. They add
+    Burst compilation, deployment to the local Mods folder and publishing.
+
+    Without it, Standalone.props and Standalone.targets reference the game's
+    DLLs directly and copy the build to the local Mods folder. Jobs then run
+    without Burst, which works but is slower.
+  -->
+  <!-- The toolchain counts as installed only once the Unity mods project has
+       been opened in Unity: its Library folder holds the Burst compiler and
+       the Entities code generators that Mod.props points at. A cancelled
+       installation leaves the environment variables and Mod.props behind
+       without it, and would fail every build. -->
+  <PropertyGroup>
+    <ToolchainPath>$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))</ToolchainPath>
+    <UnityModsProject>$([System.Environment]::GetEnvironmentVariable('CSII_UNITYMODPROJECTPATH', 'EnvironmentVariableTarget.User'))</UnityModsProject>
+    <UseToolchain Condition="'$(ToolchainPath)' != '' And Exists('$(ToolchainPath)\Mod.props') And Exists('$(UnityModsProject)\Library\PackageCache')">true</UseToolchain>
+  </PropertyGroup>
+
+  <Import Project="$(ToolchainPath)\Mod.props" Condition="'$(UseToolchain)' == 'true'" />
+  <Import Project="$(ToolchainPath)\Mod.targets" Condition="'$(UseToolchain)' == 'true'" />
+  <Import Project="Standalone.props" Condition="'$(UseToolchain)' != 'true'" />
+  <Import Project="Standalone.targets" Condition="'$(UseToolchain)' != 'true'" />
+
+  <PropertyGroup>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!-- The toolchain's ModPostProcessor (Burst) and ModPublisher are built for
+       .NET 6, which is out of support and often not installed. Rolling forward
+       to the newest installed runtime lets them run on .NET 8 or later.
+       Mod.targets runs both through Exec, i.e. cmd.exe, and documents
+       overriding their command lines like this. No space before "&&", or it
+       becomes part of the value. -->
+  <!-- -p:DeployMod=false builds without touching the game's Mods folder,
+       e.g. while the game runs and holds the Burst DLL open. -->
+  <Target Name="DeployToBuildFolder" AfterTargets="BuildGetFullPaths" Condition="'$(UseToolchain)' == 'true' And '$(DeployMod)' == 'false'">
+    <PropertyGroup>
+      <DeployDir>$(MSBuildProjectDirectory)\bin\deploy\$(TargetName)</DeployDir>
+    </PropertyGroup>
+  </Target>
+
+  <!-- DeployWIP in Mod.targets removes the Mods folder before copying. With
+       the game running, the Burst DLL stays locked, the removal fails half
+       way and leaves a folder the game cannot load. Stop before that. -->
+  <Target Name="RefuseDeployWhileGameRuns" BeforeTargets="DeployWIP" Condition="'$(UseToolchain)' == 'true' And '$(DeployMod)' != 'false' And '$(OS)' == 'Windows_NT'">
+    <Exec Command="tasklist /FI &quot;IMAGENAME eq Cities2.exe&quot; /NH" ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GameProcess" />
+    </Exec>
+    <Error Condition="$(GameProcess.Contains('Cities2.exe'))" Text="Cities: Skylines II is running and holds the mod open. Close the game, or build with -p:DeployMod=false." />
+  </Target>
+
+  <Target Name="PostProcessorRollForward" AfterTargets="ModPostProcessorConfig" Condition="'$(UseToolchain)' == 'true'">
+    <PropertyGroup>
+      <ModPostProcessorArgs>set DOTNET_ROLL_FORWARD=Major&amp;&amp; $(ModPostProcessorArgs)</ModPostProcessorArgs>
+    </PropertyGroup>
+  </Target>
+  <Target Name="PublisherRollForward" AfterTargets="ModPublisherConfig" Condition="'$(UseToolchain)' == 'true'">
+    <PropertyGroup>
+      <ModPublisherArgs>set DOTNET_ROLL_FORWARD=Major&amp;&amp; $(ModPublisherArgs)</ModPublisherArgs>
+    </PropertyGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- The dispatching logic is compiled into the mod assembly, so the mod ships as a single DLL. -->
+    <Compile Include="..\SmartTrains.Core\**\*.cs" Exclude="..\SmartTrains.Core\obj\**;..\SmartTrains.Core\bin\**" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Game" Private="false" />
+    <Reference Include="Colossal.Core" Private="false" />
+    <Reference Include="Colossal.Collections" Private="false" />
+    <Reference Include="Colossal.Logging" Private="false" />
+    <Reference Include="Colossal.Mathematics" Private="false" />
+    <Reference Include="Colossal.IO.AssetDatabase" Private="false" />
+    <Reference Include="Colossal.UI" Private="false" />
+    <Reference Include="Colossal.UI.Binding" Private="false" />
+    <Reference Include="Colossal.Localization" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" Private="false" />
+    <Reference Include="Unity.Burst" Private="false" />
+    <Reference Include="Unity.Collections" Private="false" />
+    <Reference Include="Unity.Entities" Private="false" />
+    <Reference Include="Unity.Mathematics" Private="false" />
+    <Reference Include="Newtonsoft.Json" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Localization\*.json" LogicalName="SmartTrains.Localization.%(Filename).json" />
+  </ItemGroup>
+
+  <!-- The in-game panel, built separately (build/docker/compose.yml). The game
+       loads SmartTrains.mjs from the same folder as SmartTrains.dll, so it
+       travels with the build output and from there into the Mods folder and
+       the upload. -->
+  <ItemGroup>
+    <None Include="..\SmartTrains.UI\build\dist\**\*" Link="%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnMissingPanel" BeforeTargets="Build" Condition="!Exists('..\SmartTrains.UI\build\dist\SmartTrains.mjs')">
+    <Warning Text="The panel is not built, the mod will run without it. Build it with: docker compose -f build/docker/compose.yml run --rm ui" />
+  </Target>
+
+  <ItemGroup>
+    <Reference Update="System" Private="false" />
+    <Reference Update="System.Core" Private="false" />
+    <Reference Update="System.Data" Private="false" />
+  </ItemGroup>
+
+</Project>
