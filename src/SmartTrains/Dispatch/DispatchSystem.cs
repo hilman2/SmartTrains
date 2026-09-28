@@ -384,14 +384,23 @@ namespace SmartTrains.Dispatch
 
             foreach (List<long> circle in WaitCycles.Find(waits))
             {
+                // Let go of a held train that can then move: one the game
+                // does not report stuck behind another train. Letting go of
+                // one that is also blocked in the flesh would change nothing.
+                // Among those, the one of highest rank.
                 Entity release = Entity.Null;
                 float best = float.MinValue;
+                bool bestCanMove = false;
                 foreach (long key in circle)
                 {
                     Entity train = EntityKey.ToEntity(key);
-                    if (m_States.TryGetValue(train, out DispatchState state) && state.Holding && state.Order.Rank > best)
+                    if (!m_States.TryGetValue(train, out DispatchState state) || !state.Holding)
+                        continue;
+                    bool canMove = TrainReader.TrainOf(em, em.GetComponentData<Blocker>(train).m_Blocker) == Entity.Null;
+                    if ((canMove && !bestCanMove) || (canMove == bestCanMove && state.Order.Rank > best))
                     {
                         best = state.Order.Rank;
+                        bestCanMove = canMove;
                         release = train;
                     }
                 }

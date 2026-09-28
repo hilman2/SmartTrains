@@ -254,6 +254,55 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void AFollowerMayMoveUpIntoASectionTheTrainAheadIsLeaving()
+        {
+            // One-way line: P (100 m), turnout X, S (200 m), turnout Y, T.
+            // The leader is in S with its grant beyond it into T: it leaves S.
+            // S has room for one train only, but the follower may run into it
+            // behind the leader instead of waiting in P until S is empty.
+            var b = new TrackBuilder()
+                .Point("A", 0, 0).Point("B", 100, 0).Point("C", 120, 0)
+                .Point("D", 320, 0).Point("E", 340, 0).Point("F", 740, 0);
+            long p = b.Lane("A", "B", twoWay: false);
+            long x = b.Lane("B", "C", LaneKind.Switch, twoWay: false);
+            long s = b.Lane("C", "D", twoWay: false);
+            long y = b.Lane("D", "E", LaneKind.Switch, twoWay: false);
+            long t = b.Lane("E", "F", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput leader = Train(1, 50, M(n, s, true), M(n, y, true), M(n, t, true));
+            TrainInput follower = Train(2, 10, M(n, p, true), M(n, x, true), M(n, s, true), M(n, y, true), M(n, t, true));
+            List<TrainOrder> orders = d.Dispatch(new[] { leader, follower });
+
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
+            TrainOrder second = Order(orders, 2);
+            Assert.Equal(3, second.HoldAt);
+            Assert.Equal(1, second.WaitingFor);
+        }
+
+        [Fact]
+        public void AFollowerDoesNotMoveUpBehindATrainThatWillStandThere()
+        {
+            // The same, but the leader's route ends in S: it will stand there,
+            // and the follower would end up with its rear in turnout X.
+            var b = new TrackBuilder()
+                .Point("A", 0, 0).Point("B", 100, 0).Point("C", 120, 0).Point("D", 320, 0);
+            long p = b.Lane("A", "B", twoWay: false);
+            long x = b.Lane("B", "C", LaneKind.Switch, twoWay: false);
+            long s = b.Lane("C", "D", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput leader = Train(1, 50, M(n, s, true));
+            TrainInput follower = Train(2, 10, M(n, p, true), M(n, x, true), M(n, s, true));
+            TrainOrder second = Order(d.Dispatch(new[] { leader, follower }), 2);
+
+            Assert.Equal(1, second.HoldAt);
+            Assert.Equal(HoldReason.NoRoomAhead, second.Reason);
+        }
+
+        [Fact]
         public void ATrainIsNotHeldBackByTheTrainFollowingIt()
         {
             // The same, the other way round: the train ahead has the higher

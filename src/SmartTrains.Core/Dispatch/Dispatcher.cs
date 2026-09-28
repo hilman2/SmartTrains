@@ -167,6 +167,12 @@ namespace SmartTrains.Core.Dispatch
             public bool Occupies;
 
             /// <summary>
+            /// Its grant goes on beyond the section: it will run out of it,
+            /// and makes room for a train behind as it goes.
+            /// </summary>
+            public bool Leaving;
+
+            /// <summary>
             /// How far its front has come through the section, in metres and
             /// in its own direction; positive infinity if its front has left
             /// the section and only its rear is still in it, negative infinity
@@ -223,8 +229,7 @@ namespace SmartTrains.Core.Dispatch
                 if (end > train.Committed)
                     end = Math.Max(train.Committed, Math.Min(end, Unobstructed(train, train.Route, end, holdings)));
                 granted[train.Id] = end;
-                for (int i = 0; i <= end; i++)
-                    Hold(holdings, train, train.Route[i].Lane, train.Route[i].Forward, occupies: false);
+                Grant(train, train.Route, 0, end, holdings);
             }
 
             var orders = new Dictionary<long, TrainOrder>();
@@ -516,6 +521,12 @@ namespace SmartTrains.Core.Dispatch
                     // the grant would lead past it; see above.
                     if (section != lastSection && section != frontSection && user.Occupies)
                         return Refuse(order, HoldReason.TrackHeld, user.Train, i);
+                    // A train granted beyond the section runs out of it and
+                    // makes room: the train behind may close up on it, as
+                    // with a moving block, instead of waiting for the
+                    // section to be empty.
+                    if (user.Leaving)
+                        continue;
                     used += user.Length + kMargin;
                     last = user.Train;
                 }
@@ -659,10 +670,27 @@ namespace SmartTrains.Core.Dispatch
             return false;
         }
 
+        /// <summary>
+        /// Enters <c>route[from..to]</c> as granted to the train, and marks
+        /// the sections its grant now runs out of as ones it is leaving.
+        /// </summary>
         private void Grant(TrainInput train, List<Move> route, int from, int to, Holdings holdings)
         {
             for (int i = from; i <= to; i++)
                 Hold(holdings, train, route[i].Lane, route[i].Forward, occupies: false);
+            for (int i = 0; i < to; i++)
+            {
+                int section = m_Layout.SectionOf(route[i].Lane);
+                if (section < 0 || m_Layout.SectionOf(route[i + 1].Lane) == section)
+                    continue;
+                if (!holdings.Sections.TryGetValue(section, out List<SectionUser> users))
+                    continue;
+                foreach (SectionUser user in users)
+                {
+                    if (user.Train == train.Id)
+                        user.Leaving = true;
+                }
+            }
         }
 
         /// <summary>

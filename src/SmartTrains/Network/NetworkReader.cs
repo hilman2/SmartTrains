@@ -94,11 +94,18 @@ namespace SmartTrains.Network
             return new TrackNetwork(lanes, overlaps);
         }
 
+        /// <summary>
+        /// A lane where no train may stop is a junction lane to the
+        /// dispatcher: turnouts and diamonds, and level crossings as well. A
+        /// train standing on a level crossing closes the road; the game marks
+        /// those lanes CrossingTraffic (LaneOverlapSystem: crosses a lane that
+        /// is not track) or LevelCrossing (a level crossing node).
+        /// </summary>
         private static LaneKind KindOf(TrackLaneFlags flags)
         {
             if ((flags & (TrackLaneFlags.Switch | TrackLaneFlags.DoubleSwitch)) != 0)
                 return LaneKind.Switch;
-            if ((flags & TrackLaneFlags.DiamondCrossing) != 0)
+            if ((flags & (TrackLaneFlags.DiamondCrossing | TrackLaneFlags.CrossingTraffic | TrackLaneFlags.LevelCrossing)) != 0)
                 return LaneKind.Crossing;
             return LaneKind.Plain;
         }
