@@ -65,6 +65,12 @@ namespace SmartTrains.Dispatch
                 return route;
             if (em.TryGetComponent(current.m_Front.m_Lane, out Curve frontCurve))
                 route.FrontRemaining = frontCurve.m_Length * math.abs(front.w - front.y);
+            // A route ends where the train reverses, as it does for the game,
+            // which reserves nothing beyond that point until the train has
+            // turned. To the dispatcher, the reversing point is where the
+            // train is going; once it has turned, the way back is a new route.
+            if ((current.m_Front.m_LaneFlags & TrainLaneFlags.Return) != 0)
+                return Finish(em, network, train, route);
 
             bool reserving = true;
             DynamicBuffer<TrainNavigationLane> lanes = em.GetBuffer<TrainNavigationLane>(train, true);
@@ -80,6 +86,8 @@ namespace SmartTrains.Dispatch
                 reserving &= (lane.m_Flags & TrainLaneFlags.Reserved) != 0;
                 if (reserving)
                     route.Committed = route.Moves.Count - 1;
+                if ((lane.m_Flags & TrainLaneFlags.Return) != 0)
+                    return Finish(em, network, train, route);
             }
 
             PathOwner owner = em.GetComponentData<PathOwner>(train);
@@ -89,7 +97,7 @@ namespace SmartTrains.Dispatch
                 PathElement element = path[i];
                 bool known = SameAsLast(route, element.m_Target)
                     || TryAdd(route, network, element.m_Target, element.m_TargetDelta.y >= element.m_TargetDelta.x, RouteSource.Path, i);
-                if (!known)
+                if (!known || (element.m_Flags & PathElementFlags.Return) != 0)
                     break;
             }
             return Finish(em, network, train, route);

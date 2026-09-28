@@ -72,9 +72,12 @@ namespace SmartTrains.Dispatch
         /// <summary>
         /// In-game minutes after which a held train is let go regardless. A
         /// hold that long means the dispatcher misjudges the situation, and
-        /// the train is better off with the game's own handling.
+        /// the train is better off with the game's own handling. It must be
+        /// long: at high game speed an in-game hour passes in about a minute,
+        /// and a train let go too early runs into the junction it was kept
+        /// out of. Circles of waiting trains are broken separately, at once.
         /// </summary>
-        private const float kMaxHoldMinutes = 30f;
+        private const float kMaxHoldMinutes = 240f;
 
         // Base ranks: passengers first, then freight on a line, then through
         // traffic, which only crosses the city. Two points are one minute of
