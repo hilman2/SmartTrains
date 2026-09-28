@@ -189,6 +189,35 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void AFollowingTrainLeavingAJunctionIsNotGrantedTrackBeyondTheTrainAhead()
+        {
+            // The follower's front is still in the turnout W behind the
+            // section; the leader stands in the section, the next turnout X
+            // ahead of it. The follower may close up in the section, but a
+            // second step in the same round must not take it past the leader.
+            var b = new TrackBuilder()
+                .Point("V", -20, 5).Point("A", 0, 0).Point("B", 600, 0)
+                .Point("C", 620, 5).Point("D", 1020, 5).Point("E", 620, -5);
+            long w = b.Lane("V", "A", LaneKind.Switch, twoWay: false);
+            long s = b.Lane("A", "B", twoWay: false);
+            long x = b.Lane("B", "C", LaneKind.Switch, twoWay: false);
+            b.Lane("B", "E", LaneKind.Switch, twoWay: false);
+            long t = b.Lane("C", "D", twoWay: false);
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput leader = Train(1, 10, M(n, s, true), M(n, x, true), M(n, t, true));
+            leader.FrontRemaining = 50f;
+            TrainInput follower = Train(2, 50, M(n, w, true), M(n, s, true), M(n, x, true), M(n, t, true));
+            List<TrainOrder> orders = d.Dispatch(new[] { leader, follower });
+
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
+            TrainOrder second = Order(orders, 2);
+            Assert.Equal(2, second.HoldAt);
+            Assert.Equal(1, second.WaitingFor);
+        }
+
+        [Fact]
         public void ATrainIsNotHeldBackByTheTrainFollowingIt()
         {
             // The same, the other way round: the train ahead has the higher
@@ -278,6 +307,38 @@ namespace SmartTrains.Core.Tests.Dispatch
             Assert.Equal(1, third.HoldAt);
             Assert.Equal(HoldReason.GivingWay, third.Reason);
             Assert.Equal(1, third.WaitingFor);
+        }
+
+        [Fact]
+        public void AClaimDoesNotKeepATrainOnTheSingleTrackFromLeavingIt()
+        {
+            // Train 1 runs east on the single track, which here has a joint
+            // in the middle. Train 2, of higher rank, waits in the east loop
+            // to come the other way; it is refused and claims the single
+            // track. The claim must not stop train 1, which is already on it
+            // and only needs to get off it, from running on.
+            var b = new TrackBuilder()
+                .Point("A1", 120, 10).Point("A2", 320, 10)
+                .Point("J2", 340, 0).Point("M", 540, 0).Point("K", 740, 0)
+                .Point("P1", 760, 10).Point("P2", 960, 10)
+                .Point("Q1", 760, -10).Point("Q2", 960, -10);
+            long a = b.Lane("A1", "A2");
+            long aj = b.Lane("A2", "J2", LaneKind.Switch);
+            long s1 = b.Lane("J2", "M");
+            long s2 = b.Lane("M", "K");
+            long kp = b.Lane("K", "P1", LaneKind.Switch);
+            long kq = b.Lane("K", "Q1", LaneKind.Switch);
+            long p = b.Lane("P1", "P2");
+            long q = b.Lane("Q1", "Q2");
+            TrackNetwork n = b.Build();
+            var d = new Dispatcher(new TrackLayout(n));
+
+            TrainInput onTrack = Train(1, 5, M(n, s1, true), M(n, s2, true), M(n, kq, true), M(n, q, true));
+            TrainInput waiting = Train(2, 30, M(n, p, false), M(n, kp, false), M(n, s2, false), M(n, s1, false), M(n, aj, false), M(n, a, false));
+            List<TrainOrder> orders = d.Dispatch(new[] { onTrack, waiting });
+
+            Assert.Equal(1, Order(orders, 2).WaitingFor);
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
         }
 
         [Fact]

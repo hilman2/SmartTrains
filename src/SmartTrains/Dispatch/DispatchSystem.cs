@@ -361,15 +361,19 @@ namespace SmartTrains.Dispatch
             {
                 Entity train = entry.Key;
                 DispatchState state = entry.Value;
+                // Only standing trains wait. Two trains still running towards
+                // a crossing they both need, each held for the other, sort
+                // themselves out: the one that has it runs through and frees
+                // it. Only if both have come to a stop is it a circle.
+                if (math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity) >= 0.1f)
+                    continue;
                 if (state.Holding && state.WaitingFor != Entity.Null)
                 {
                     waits[EntityKey.Of(train)] = EntityKey.Of(state.WaitingFor);
                     continue;
                 }
                 // Not held: the train waits for whatever the game reports in
-                // its way, if it stands.
-                if (math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity) >= 0.1f)
-                    continue;
+                // its way.
                 Entity blocker = TrainReader.TrainOf(em, em.GetComponentData<Blocker>(train).m_Blocker);
                 if (blocker != Entity.Null && blocker != train)
                     waits[EntityKey.Of(train)] = EntityKey.Of(blocker);

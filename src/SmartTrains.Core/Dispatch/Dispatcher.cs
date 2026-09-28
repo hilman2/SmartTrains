@@ -181,6 +181,9 @@ namespace SmartTrains.Core.Dispatch
             /// <summary>Junction lanes and the train holding each.</summary>
             public readonly Dictionary<int, long> Lanes = new Dictionary<int, long>();
 
+            /// <summary>Junction lanes a train is on, not only granted, and that train.</summary>
+            public readonly Dictionary<int, long> OccupiedLanes = new Dictionary<int, long>();
+
             /// <summary>Per section, the trains in it or granted into it, their direction and length.</summary>
             public readonly Dictionary<int, List<SectionUser>> Sections = new Dictionary<int, List<SectionUser>>();
 
@@ -325,6 +328,8 @@ namespace SmartTrains.Core.Dispatch
             if (section < 0)
             {
                 holdings.Lanes[lane] = train.Id;
+                if (occupies)
+                    holdings.OccupiedLanes[lane] = train.Id;
                 return;
             }
             if (!holdings.Sections.TryGetValue(section, out List<SectionUser> users))
@@ -455,18 +460,12 @@ namespace SmartTrains.Core.Dispatch
             // Track beyond that train is granted to the train ahead first:
             // granted to the one behind, it would hold the one ahead back for
             // a train that cannot get by, and the two would wait for each
-            // other. The train may still close up behind it.
-            (int frontSection, float frontAlong) = m_Fronts.TryGetValue(train.Id, out (int, float) f) ? f : (-1, 0f);
-            if (frontSection >= 0 && LeavesSection(route, from, to, frontSection)
-                && holdings.Sections.TryGetValue(frontSection, out List<SectionUser> mine))
-            {
-                bool myForward = SectionForward(frontSection, route[0]);
-                foreach (SectionUser user in mine)
-                {
-                    if (user.Train != train.Id && user.Occupies && user.Forward == myForward && user.Along > frontAlong)
-                        return Refuse(order, HoldReason.TrackHeld, user.Train, from);
-                }
-            }
+            // other. The train may still close up behind it, within the
+            // section the train ahead is in.
+            (long ahead, int aheadSection) = TrainAhead(train, route, from - 1, holdings);
+            if (ahead != 0 && (aheadSection < 0 || LeavesSection(route, from, to, aheadSection)))
+                return Refuse(order, HoldReason.TrackHeld, ahead, from);
+            int frontSection = m_Fronts.TryGetValue(train.Id, out (int Section, float Along) f) ? f.Section : -1;
             for (int i = from; i <= to; i++)
             {
                 int lane = route[i].Lane;
@@ -485,9 +484,14 @@ namespace SmartTrains.Core.Dispatch
                 if (!checkedSections.Add(section))
                     continue;
                 bool forward = SectionForward(section, route[i]);
-                if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward)
+                holdings.Sections.TryGetValue(section, out List<SectionUser> users);
+                // A claim keeps trains from entering the single track against
+                // the claimant; a train already on it must be let off it, or
+                // it would hold the claimant up for good.
+                if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward
+                    && !Occupies(users, train.Id))
                     return Refuse(order, HoldReason.GivingWay, claim.Train, i);
-                if (!holdings.Sections.TryGetValue(section, out List<SectionUser> users))
+                if (users == null)
                     continue;
                 float used = 0f;
                 long last = 0;
@@ -511,6 +515,55 @@ namespace SmartTrains.Core.Dispatch
                     return Refuse(order, HoldReason.NoRoomAhead, last, i);
             }
             return true;
+        }
+
+        /// <summary>
+        /// The first train on <c>route[0..end]</c>, the track the train is on
+        /// or already granted, that is ahead of it in its direction; with the
+        /// section it is in, or -1 for a junction area. Returns (0, -1) if
+        /// there is none.
+        /// </summary>
+        private (long Train, int Section) TrainAhead(TrainInput train, List<Move> route, int end, Holdings holdings)
+        {
+            (int frontSection, float frontAlong) = m_Fronts.TryGetValue(train.Id, out (int, float) f) ? f : (-1, 0f);
+            var seen = new HashSet<int>();
+            for (int i = 0; i <= end && i < route.Count; i++)
+            {
+                int lane = route[i].Lane;
+                int section = m_Layout.SectionOf(lane);
+                if (section < 0)
+                {
+                    // On a junction lane on the way, another train is ahead.
+                    if (holdings.OccupiedLanes.TryGetValue(lane, out long other) && other != train.Id)
+                        return (other, -1);
+                    continue;
+                }
+                if (!seen.Add(section) || !holdings.Sections.TryGetValue(section, out List<SectionUser> users))
+                    continue;
+                bool forward = SectionForward(section, route[i]);
+                foreach (SectionUser user in users)
+                {
+                    if (user.Train == train.Id || !user.Occupies || user.Forward != forward)
+                        continue;
+                    // In the train's own section, only a train further along
+                    // is ahead; in any later section, every train in it is.
+                    if (section != frontSection || user.Along > frontAlong)
+                        return (user.Train, section);
+                }
+            }
+            return (0, -1);
+        }
+
+        private static bool Occupies(List<SectionUser> users, long train)
+        {
+            if (users == null)
+                return false;
+            foreach (SectionUser user in users)
+            {
+                if (user.Train == train && user.Occupies)
+                    return true;
+            }
+            return false;
         }
 
         /// <summary>Whether <c>route[from..to]</c> reaches a lane outside the given section.</summary>
