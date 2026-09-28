@@ -677,13 +677,16 @@ namespace SmartTrains.Dispatch
         }
 
         /// <summary>
-        /// Slows held trains to the dispatcher's advice, so that they roll up
-        /// to their hold as it frees instead of stopping in front of it and
-        /// starting again from a standstill.
+        /// Slows trains to the dispatcher's advice, so that they roll up to
+        /// where they would stop, their hold or a standing train ahead, as the
+        /// way frees, instead of stopping and starting again from a
+        /// standstill.
         ///
-        /// Only trains whose hold is in place: a train already past the point
-        /// where it could stop runs through, and slowing it would only keep it
-        /// on the track longer.
+        /// A held train only while its hold is in place: one already past the
+        /// point where it could stop runs through, and slowing it would only
+        /// keep it on the track longer. A train the dispatcher let go, to
+        /// break a circle or after a long hold, is not slowed either: the
+        /// advice is for the hold it no longer keeps.
         /// </summary>
         private void SlowDown()
         {
@@ -694,9 +697,9 @@ namespace SmartTrains.Dispatch
                 Entity train = entry.Key;
                 DispatchState state = entry.Value;
                 float advice = state.Order.SpeedAdvice;
-                if (!state.Holding || advice <= 0f)
+                if (advice <= 0f || state.Released)
                     continue;
-                if (!m_Marks.TryGetValue(train, out HoldMark mark) || mark.Lane != state.HoldLane)
+                if (state.Holding && (!m_Marks.TryGetValue(train, out HoldMark mark) || mark.Lane != state.HoldLane))
                     continue;
                 if (!m_Pace.TryGetValue(train, out TrainData pace) || !em.Exists(train))
                     continue;

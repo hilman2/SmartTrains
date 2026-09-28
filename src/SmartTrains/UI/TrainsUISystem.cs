@@ -316,7 +316,7 @@ namespace SmartTrains.UI
             writer.PropertyName("waitingFor");
             WriteTrainRef(writer, state.WaitingFor);
             writer.PropertyName("advice");
-            writer.Write(state.Holding ? state.Order.SpeedAdvice : 0f);
+            writer.Write(state.Released ? 0f : state.Order.SpeedAdvice);
             writer.TypeEnd();
         }
 

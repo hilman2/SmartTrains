@@ -125,10 +125,10 @@ namespace SmartTrains.Core.Dispatch
         public long Ahead;
 
         /// <summary>
-        /// Metres per second the held train should slow to, so that it
-        /// reaches the lane it waits in front of about when that lane frees;
-        /// 0 for no advice. The hold stays: if the lane frees later, the
-        /// train still stops.
+        /// Metres per second the train should slow to, so that it reaches
+        /// the point where it would stop, its hold or the rear of a standing
+        /// train ahead, about when the way on frees; 0 for no advice. Holds
+        /// stay: if the way frees later, the train still stops.
         /// </summary>
         public float SpeedAdvice;
     }
@@ -319,14 +319,14 @@ namespace SmartTrains.Core.Dispatch
                 }
             }
 
-            var byId = new Dictionary<long, TrainInput>();
-            foreach (TrainInput train in trains)
-                byId[train.Id] = train;
+            var context = new AdviceContext { Trains = new Dictionary<long, TrainInput>(), Orders = orders, Routes = routes };
             foreach (TrainInput train in trains)
             {
-                orders[train.Id].SpeedAdvice = SpeedAdvice(train, routes[train.Id], orders[train.Id], byId, routes);
+                context.Trains[train.Id] = train;
                 orders[train.Id].Ahead = TrainAhead(train, routes[train.Id], granted[train.Id], holdings).Train;
             }
+            foreach (TrainInput train in trains)
+                orders[train.Id].SpeedAdvice = SpeedAdvice(train, orders[train.Id], context);
 
             m_GrantedEnd.Clear();
             var result = new List<TrainOrder>(trains.Count);
@@ -346,61 +346,151 @@ namespace SmartTrains.Core.Dispatch
         /// <summary>Seconds a train standing at a platform needs after its departure time to clear the track ahead.</summary>
         private const float kStartUpSeconds = 20f;
 
-        /// <summary>
-        /// How fast a held train should run on, so that it reaches the lane
-        /// it waits for about when that lane frees, instead of stopping in
-        /// front of it and starting again; 0 for none.
-        ///
-        /// Only a train that is entirely in the last section before its hold
-        /// slows down. Slowing earlier would keep it longer in a junction
-        /// behind it, where it blocks other trains. When the lane frees is
-        /// estimated from the train it waits for: running, from its way to
-        /// beyond the lane and its speed; at a platform, from its departure
-        /// time. Otherwise nothing is known and the train stops as usual.
-        /// </summary>
-        private float SpeedAdvice(TrainInput train, List<Move> route, TrainOrder order,
-            Dictionary<long, TrainInput> trains, Dictionary<long, List<Move>> routes)
+        /// <summary>What one round knows about all trains, for the speed advice.</summary>
+        private sealed class AdviceContext
         {
-            if (order.HoldAt < 1 || order.Reason == HoldReason.None || order.BlockedAt < 0 || order.BlockedAt >= route.Count)
-                return 0f;
-            if (!trains.TryGetValue(order.WaitingFor, out TrainInput other))
-                return 0f;
-            int frontSection = m_Fronts.TryGetValue(train.Id, out (int Section, float Along) f) ? f.Section : -1;
-            if (frontSection < 0)
+            public Dictionary<long, TrainInput> Trains;
+            public Dictionary<long, TrainOrder> Orders;
+            public Dictionary<long, List<Move>> Routes;
+
+            /// <summary>Per standing train, seconds until it can move off, or null if unknown; see UntilMoving.</summary>
+            public readonly Dictionary<long, float?> UntilMoving = new Dictionary<long, float?>();
+        }
+
+        /// <summary>
+        /// How fast a train should run on, so that it reaches the point where
+        /// it would stop about when the way on frees, and rolls on instead of
+        /// stopping and starting again; 0 for none.
+        ///
+        /// The point where it would stop is the rear of a standing train ahead
+        /// of it in its section, or else the lane the dispatcher holds it in
+        /// front of. When the way frees is estimated from the train it waits
+        /// for, and from the one that train waits for in turn (see
+        /// UntilLaneFrees). If that is not known, the train stops as it
+        /// otherwise would.
+        ///
+        /// A train on a junction lane does not slow down, nor one with a
+        /// junction lane between it and the point where it would stop: it
+        /// would stand in others' way longer. Anywhere else a train that rolls
+        /// on clears the track sooner than one that stands and starts again.
+        /// </summary>
+        private float SpeedAdvice(TrainInput train, TrainOrder order, AdviceContext context)
+        {
+            if (train.Speed <= 0.1f)
                 return 0f;
             foreach (Move move in train.Occupied)
             {
-                if (m_Layout.SectionOf(move.Lane) != frontSection)
+                if (m_Layout.SectionOf(move.Lane) < 0)
                     return 0f;
             }
-            for (int i = 1; i < order.HoldAt; i++)
-            {
-                if (m_Layout.SectionOf(route[i].Lane) != frontSection)
-                    return 0f;
-            }
-
-            float seconds;
-            if (other.Speed > 1f)
-            {
-                // Until its rear has passed the lane this train waits for.
-                List<Move> otherRoute = routes[other.Id];
-                int at = otherRoute.FindIndex(m => m.Lane == route[order.BlockedAt].Lane);
-                float distance = (at >= 0 ? Distance(other, otherRoute, at) : 0f) + other.Length;
-                seconds = distance / other.Speed;
-            }
-            else if (other.DepartureIn >= 0f)
-            {
-                seconds = other.DepartureIn + kStartUpSeconds;
-            }
-            else
-            {
+            (float distance, float? seconds) = StopAhead(train, order, context, new HashSet<long> { train.Id }, slowing: true);
+            if (seconds == null || seconds.Value <= 0.1f)
                 return 0f;
-            }
-
-            float advice = Distance(train, route, order.HoldAt - 1) / Math.Max(seconds, 0.1f);
+            float advice = distance / seconds.Value;
             if (advice >= train.Speed)
                 return 0f;
             return Math.Max(advice, MinAdvisedSpeed);
+        }
+
+        /// <summary>
+        /// Where ahead the train would stop, in metres from its front, and in
+        /// how many seconds the way on frees there; seconds is null if the
+        /// train has no such point, or if when the way frees is not known.
+        /// <paramref name="visiting"/> holds the trains whose wait is being
+        /// worked out, so that a circle of trains waiting for each other ends
+        /// in "not known". With <paramref name="slowing"/>, for a train that
+        /// is to slow down, a hold with a junction lane before it counts as no
+        /// such point; see SpeedAdvice.
+        /// </summary>
+        private (float Distance, float? Seconds) StopAhead(TrainInput train, TrainOrder order, AdviceContext context, HashSet<long> visiting, bool slowing)
+        {
+            // Behind a standing train in its own section, the train stops at
+            // that train's rear, once that train has moved up to where it
+            // stops itself, and may go on when that train moves off from there.
+            if (order.Ahead != 0 && context.Trains.TryGetValue(order.Ahead, out TrainInput ahead) && ahead.Speed <= 1f
+                && m_Fronts.TryGetValue(train.Id, out (int Section, float Along) own) && own.Section >= 0
+                && m_Fronts.TryGetValue(ahead.Id, out (int Section, float Along) theirs) && theirs.Section == own.Section
+                && theirs.Along > own.Along)
+            {
+                float gap = Math.Max(0f, theirs.Along - ahead.Length - kMargin - own.Along);
+                (float further, float? free) = StandingStop(ahead, context, visiting);
+                return (gap + further, free);
+            }
+
+            List<Move> route = context.Routes[train.Id];
+            if (order.HoldAt < 1 || order.Reason == HoldReason.None || order.BlockedAt < 0 || order.BlockedAt >= route.Count)
+                return (0f, null);
+            for (int i = 1; slowing && i < order.HoldAt; i++)
+            {
+                if (m_Layout.SectionOf(route[i].Lane) < 0)
+                    return (0f, null);
+            }
+            return (Distance(train, route, order.HoldAt - 1), UntilLaneFrees(order.WaitingFor, route[order.BlockedAt].Lane, context, visiting));
+        }
+
+        /// <summary>
+        /// Seconds until the train <paramref name="other"/> has cleared
+        /// <paramref name="lane"/>, or a lane crossing it; null if not known.
+        /// A train running clears it after running to and past it; a
+        /// standing one once it has moved off and got going.
+        /// </summary>
+        private float? UntilLaneFrees(long other, int lane, AdviceContext context, HashSet<long> visiting)
+        {
+            if (!context.Trains.TryGetValue(other, out TrainInput train))
+                return null;
+            if (train.Speed > 1f)
+            {
+                List<Move> route = context.Routes[other];
+                int at = route.FindIndex(m => m.Lane == lane);
+                float distance = (at >= 0 ? Distance(train, route, at) : 0f) + train.Length;
+                return distance / train.Speed;
+            }
+            float? start = UntilMoving(other, context, visiting);
+            return start + kStartUpSeconds;
+        }
+
+        /// <summary>
+        /// Seconds until the train can move off: 0 if it is moving, or
+        /// standing with track before it up to where it would stop; its
+        /// departure time if it boards; otherwise, if the dispatcher holds it
+        /// or it stands behind a standing train, until its own way on frees.
+        /// Null if not known, e.g. for a train the game stops, or one in a
+        /// circle of trains waiting for each other.
+        /// </summary>
+        private float? UntilMoving(long id, AdviceContext context, HashSet<long> visiting)
+        {
+            if (context.UntilMoving.TryGetValue(id, out float? known))
+                return known;
+            if (!context.Trains.TryGetValue(id, out TrainInput train))
+                return null;
+            float? seconds;
+            if (train.Speed > 1f)
+            {
+                seconds = 0f;
+            }
+            else
+            {
+                (float distance, float? free) = StandingStop(train, context, visiting);
+                seconds = free != null && distance > kMargin ? 0f : free;
+            }
+            context.UntilMoving[id] = seconds;
+            return seconds;
+        }
+
+        /// <summary>
+        /// For a standing train: how far it will move up before it stops
+        /// again, and in how many seconds its way on frees there. A train
+        /// that boards stays where it is until its departure time.
+        /// </summary>
+        private (float Distance, float? Seconds) StandingStop(TrainInput train, AdviceContext context, HashSet<long> visiting)
+        {
+            if (train.DepartureIn >= 0f)
+                return (0f, train.DepartureIn);
+            if (!visiting.Add(train.Id))
+                return (0f, null);
+            (float Distance, float? Seconds) stop = StopAhead(train, context.Orders[train.Id], context, visiting, slowing: false);
+            visiting.Remove(train.Id);
+            return stop;
         }
 
         public static float Rank(TrainInput train)

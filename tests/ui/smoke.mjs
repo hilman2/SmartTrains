@@ -126,6 +126,7 @@ const rows = [
   { ...base, index: 21, moving: false, reason: 11, minutes: 4, blocker: held.waitingFor, dispatch: held },
   { ...base, index: 22, moving: true, reason: 0, dispatch: { ...held, reason: 3, waitingFor: null } },
   { ...base, index: 24, moving: true, reason: 0, dispatch: { ...held, advice: 11.2 } },
+  { ...base, index: 25, moving: true, reason: 0, dispatch: { rank: 20, holding: false, reason: 0, waitingFor: null, advice: 6.5 } },
   { ...base, index: 23, dispatch: null },
 ];
 const trains = { total: rows.length, moving: 5, standing: 5, atPlatform: 3, deadlocked: 1, dispatcherActive: false, holding: 2, rows };

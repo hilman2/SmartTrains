@@ -187,12 +187,14 @@ const holdFallback: Record<HoldReason, string> = {
  * lets run.
  */
 function dispatchText(dispatch: Dispatch | null, active: boolean, t: Translate): string | null {
-  if (!dispatch || !dispatch.holding) return null;
+  if (!dispatch) return null;
+  const slow = dispatch.advice > 0 ? `${t("Hold.SlowDown", "slowing to")} ${Math.round(dispatch.advice * 3.6)} km/h` : "";
+  // A train closing up on a standing train ahead is slowed without being held.
+  if (!dispatch.holding) return slow ? `${t("Dispatcher.Label", "Dispatcher")} ${slow}` : null;
   const who = active ? t("Hold.Active", "Dispatcher holds") : t("Hold.Planned", "Dispatcher would hold");
   const why = dispatch.reason !== HoldReason.None ? ` · ${t("Hold." + HoldReason[dispatch.reason], holdFallback[dispatch.reason])}` : "";
   const train = dispatch.waitingFor ? ` #${dispatch.waitingFor.index}` : "";
-  const slow = dispatch.advice > 0 ? ` · ${t("Hold.SlowDown", "slowing to")} ${Math.round(dispatch.advice * 3.6)} km/h` : "";
-  return `${who}${why}${train}${slow} · ${t("Rank", "rank")} ${Math.round(dispatch.rank)}`;
+  return `${who}${why}${train}${slow ? " · " + slow : ""} · ${t("Rank", "rank")} ${Math.round(dispatch.rank)}`;
 }
 
 /** The reason's text, with the cargo wording where passengers make no sense. */
