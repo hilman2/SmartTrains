@@ -47,6 +47,12 @@ namespace SmartTrains.Core.Dispatch
         /// <summary>Lanes under the train's cars, each the way the train runs it.</summary>
         public List<Move> Occupied = new List<Move>();
 
+        /// <summary>Metres per second.</summary>
+        public float Speed;
+
+        /// <summary>Seconds until the train leaves the platform it boards at; -1 if it is not boarding.</summary>
+        public float DepartureIn = -1f;
+
         /// <summary>
         /// Whether the dispatcher may send the train over another track of a
         /// passing loop than the one its route takes.
@@ -103,6 +109,14 @@ namespace SmartTrains.Core.Dispatch
 
         /// <summary>The rank the train was dispatched with, for the panel.</summary>
         public float Rank;
+
+        /// <summary>
+        /// Metres per second the held train should slow to, so that it
+        /// reaches the lane it waits in front of about when that lane frees;
+        /// 0 for no advice. The hold stays: if the lane frees later, the
+        /// train still stops.
+        /// </summary>
+        public float SpeedAdvice;
     }
 
     /// <summary>
@@ -117,8 +131,10 @@ namespace SmartTrains.Core.Dispatch
     /// locking each other up, the way path signals do on real railways.
     ///
     /// Grants carry over from round to round until the train has passed the
-    /// track. The dispatcher never takes back a grant; a train may already
-    /// be too close to stop.
+    /// track. Only where another train now stands in the way is a grant cut
+    /// back, to the last place before it where the train can wait, and never
+    /// below what the game has reserved for the train: it may already be too
+    /// close to stop.
     /// </summary>
     public sealed class Dispatcher
     {
@@ -227,7 +243,11 @@ namespace SmartTrains.Core.Dispatch
                 // What the game has reserved stays: the train may be too
                 // close to stop.
                 if (end > train.Committed)
-                    end = Math.Max(train.Committed, Math.Min(end, Unobstructed(train, train.Route, end, holdings)));
+                {
+                    int reach = Unobstructed(train, train.Route, end, holdings);
+                    if (reach < end)
+                        end = WaitingPlaceBefore(train, train.Route, reach);
+                }
                 granted[train.Id] = end;
                 Grant(train, train.Route, 0, end, holdings);
             }
@@ -264,6 +284,12 @@ namespace SmartTrains.Core.Dispatch
                 }
             }
 
+            var byId = new Dictionary<long, TrainInput>();
+            foreach (TrainInput train in trains)
+                byId[train.Id] = train;
+            foreach (TrainInput train in trains)
+                orders[train.Id].SpeedAdvice = SpeedAdvice(train, routes[train.Id], orders[train.Id], byId, routes);
+
             m_GrantedEnd.Clear();
             var result = new List<TrainOrder>(trains.Count);
             foreach (TrainInput train in trains)
@@ -274,6 +300,69 @@ namespace SmartTrains.Core.Dispatch
                 result.Add(orders[train.Id]);
             }
             return result;
+        }
+
+        /// <summary>Slowest speed advised, metres per second; slower, a train barely moves and might as well stop.</summary>
+        public const float MinAdvisedSpeed = 4f;
+
+        /// <summary>Seconds a train standing at a platform needs after its departure time to clear the track ahead.</summary>
+        private const float kStartUpSeconds = 20f;
+
+        /// <summary>
+        /// How fast a held train should run on, so that it reaches the lane
+        /// it waits for about when that lane frees, instead of stopping in
+        /// front of it and starting again; 0 for none.
+        ///
+        /// Only a train that is entirely in the last section before its hold
+        /// slows down. Slowing earlier would keep it longer in a junction
+        /// behind it, where it blocks other trains. When the lane frees is
+        /// estimated from the train it waits for: running, from its way to
+        /// beyond the lane and its speed; at a platform, from its departure
+        /// time. Otherwise nothing is known and the train stops as usual.
+        /// </summary>
+        private float SpeedAdvice(TrainInput train, List<Move> route, TrainOrder order,
+            Dictionary<long, TrainInput> trains, Dictionary<long, List<Move>> routes)
+        {
+            if (order.HoldAt < 1 || order.Reason == HoldReason.None || order.BlockedAt < 0 || order.BlockedAt >= route.Count)
+                return 0f;
+            if (!trains.TryGetValue(order.WaitingFor, out TrainInput other))
+                return 0f;
+            int frontSection = m_Fronts.TryGetValue(train.Id, out (int Section, float Along) f) ? f.Section : -1;
+            if (frontSection < 0)
+                return 0f;
+            foreach (Move move in train.Occupied)
+            {
+                if (m_Layout.SectionOf(move.Lane) != frontSection)
+                    return 0f;
+            }
+            for (int i = 1; i < order.HoldAt; i++)
+            {
+                if (m_Layout.SectionOf(route[i].Lane) != frontSection)
+                    return 0f;
+            }
+
+            float seconds;
+            if (other.Speed > 1f)
+            {
+                // Until its rear has passed the lane this train waits for.
+                List<Move> otherRoute = routes[other.Id];
+                int at = otherRoute.FindIndex(m => m.Lane == route[order.BlockedAt].Lane);
+                float distance = (at >= 0 ? Distance(other, otherRoute, at) : 0f) + other.Length;
+                seconds = distance / other.Speed;
+            }
+            else if (other.DepartureIn >= 0f)
+            {
+                seconds = other.DepartureIn + kStartUpSeconds;
+            }
+            else
+            {
+                return 0f;
+            }
+
+            float advice = Distance(train, route, order.HoldAt - 1) / Math.Max(seconds, 0.1f);
+            if (advice >= train.Speed)
+                return 0f;
+            return Math.Max(advice, MinAdvisedSpeed);
         }
 
         public static float Rank(TrainInput train)
@@ -445,6 +534,26 @@ namespace SmartTrains.Core.Dispatch
                 i = j;
             }
             return route.Count - 1;
+        }
+
+        /// <summary>
+        /// Index of the last lane at or before <c>route[reach]</c> where the
+        /// train can wait: in a section it can safely wait in, or in the
+        /// section its front is in already. A cut grant ends there rather than
+        /// just before what is in the way, which may be in a junction, where
+        /// the train would stand in the way of others. Never below
+        /// <see cref="TrainInput.Committed"/>.
+        /// </summary>
+        private int WaitingPlaceBefore(TrainInput train, List<Move> route, int reach)
+        {
+            int frontSection = m_Fronts.TryGetValue(train.Id, out (int Section, float Along) f) ? f.Section : -1;
+            for (int k = reach; k > train.Committed; k--)
+            {
+                int section = m_Layout.SectionOf(route[k].Lane);
+                if (section >= 0 && (section == frontSection || IsSafeToWaitIn(section, train)))
+                    return k;
+            }
+            return train.Committed;
         }
 
         /// <summary>

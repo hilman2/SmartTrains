@@ -75,6 +75,8 @@ export interface Dispatch {
   holding: boolean;
   reason: HoldReason;
   waitingFor: TrainRef | null;
+  /** Metres per second the held train slows to, to reach its hold as it frees; 0 for none. */
+  advice: number;
 }
 
 export interface Trains {

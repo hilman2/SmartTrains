@@ -72,6 +72,7 @@
   "Hold.TrackHeld": "track granted to",
   "Hold.NoRoomAhead": "no room ahead, behind",
   "Hold.GivingWay": "gives way to",
+  "Hold.SlowDown": "slowing to",
   "Rank": "rank",
 
   "Cause.Deadlock": "Deadlocked",

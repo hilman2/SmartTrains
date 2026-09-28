@@ -109,9 +109,9 @@ const base = {
   line: formatted("Transport.LINE_NAME"), lineColor: "#3dbf6b", moving: true, reason: 0, minutes: 0, blocker: null,
   passengers: 120, passengerCapacity: 400, load: 0, loadCapacity: 0, resource: "",
   from: custom("Central Station"), to: custom("Harbour"),
-  dispatch: { rank: 20, holding: false, reason: 0, waitingFor: null },
+  dispatch: { rank: 20, holding: false, reason: 0, waitingFor: null, advice: 0 },
 };
-const held = { rank: 34.6, holding: true, reason: 1, waitingFor: { index: 12, version: 1, line: custom("Line 2") } };
+const held = { rank: 34.6, holding: true, reason: 1, waitingFor: { index: 12, version: 1, line: custom("Line 2") }, advice: 0 };
 const rows = [
   { ...base, index: 11, moving: false, reason: 9, minutes: 3.2, blocker: { index: 12, version: 1, line: custom("Line 2") } },
   { ...base, index: 12, moving: false, reason: 3, minutes: 17.6, blocker: { index: 13, version: 1, line: null } },
@@ -125,6 +125,7 @@ const rows = [
   { ...base, index: 20, moving: false, reason: 8, minutes: 0 },
   { ...base, index: 21, moving: false, reason: 11, minutes: 4, blocker: held.waitingFor, dispatch: held },
   { ...base, index: 22, moving: true, reason: 0, dispatch: { ...held, reason: 3, waitingFor: null } },
+  { ...base, index: 24, moving: true, reason: 0, dispatch: { ...held, advice: 11.2 } },
   { ...base, index: 23, dispatch: null },
 ];
 const trains = { total: rows.length, moving: 5, standing: 5, atPlatform: 3, deadlocked: 1, dispatcherActive: false, holding: 2, rows };

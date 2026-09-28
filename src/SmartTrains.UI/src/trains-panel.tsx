@@ -191,7 +191,8 @@ function dispatchText(dispatch: Dispatch | null, active: boolean, t: Translate):
   const who = active ? t("Hold.Active", "Dispatcher holds") : t("Hold.Planned", "Dispatcher would hold");
   const why = dispatch.reason !== HoldReason.None ? ` · ${t("Hold." + HoldReason[dispatch.reason], holdFallback[dispatch.reason])}` : "";
   const train = dispatch.waitingFor ? ` #${dispatch.waitingFor.index}` : "";
-  return `${who}${why}${train} · ${t("Rank", "rank")} ${Math.round(dispatch.rank)}`;
+  const slow = dispatch.advice > 0 ? ` · ${t("Hold.SlowDown", "slowing to")} ${Math.round(dispatch.advice * 3.6)} km/h` : "";
+  return `${who}${why}${train}${slow} · ${t("Rank", "rank")} ${Math.round(dispatch.rank)}`;
 }
 
 /** The reason's text, with the cargo wording where passengers make no sense. */

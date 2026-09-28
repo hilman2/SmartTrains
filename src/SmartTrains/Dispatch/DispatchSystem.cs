@@ -53,21 +53,38 @@ namespace SmartTrains.Dispatch
     ///
     /// Runs in the simulation right before TrainNavigationSystem, which
     /// reserves track for trains. A dispatcher round every
-    /// <see cref="kRoundInterval"/> steps decides; every step the marks are
-    /// put back in place, since the game rebuilds navigation lanes whenever a
-    /// train gets a new route. With the dispatcher switched off in the
-    /// panel, rounds still run so the panel can show what it would do, but
-    /// no train is marked.
+    /// <see cref="kInterval"/> simulation frames decides and puts the marks
+    /// in place. With the dispatcher switched off in the panel, rounds still
+    /// run so the panel can show what it would do, but no train is marked.
     /// </summary>
     public partial class DispatchSystem : GameSystemBase
     {
         /// <summary>
-        /// Simulation steps per dispatcher round. Every step: between rounds a
-        /// train that has just got a new route runs without a hold, and the
-        /// game may reserve track for it that the dispatcher has granted to
-        /// another train.
+        /// TrainNavigationSystem moves trains and reserves track for them
+        /// every 16 simulation frames, at offset 3, each time by 4/15 of a
+        /// second. The dispatcher decides in exactly those frames, right before
+        /// it: more often changes nothing, less often leaves trains without an
+        /// up-to-date hold for a move.
         /// </summary>
-        private const int kRoundInterval = 1;
+        private const int kInterval = 16;
+
+        private const int kOffset = 3;
+
+        /// <summary>Seconds of train movement per simulation frame (TrainNavigationSystem: 4/15 s per 16 frames).</summary>
+        private const float kSecondsPerFrame = 1f / 60f;
+
+        /// <summary>Seconds of train movement per step of TrainNavigationSystem.</summary>
+        private const float kStepSeconds = kInterval * kSecondsPerFrame;
+
+        public override int GetUpdateInterval(SystemUpdatePhase phase)
+        {
+            return kInterval;
+        }
+
+        public override int GetUpdateOffset(SystemUpdatePhase phase)
+        {
+            return kOffset;
+        }
 
         /// <summary>
         /// In-game minutes after which a held train is let go regardless. A
@@ -103,10 +120,15 @@ namespace SmartTrains.Dispatch
 
         private Dispatcher m_Dispatcher;
         private int m_LayoutVersion = -1;
-        private int m_Step;
 
         private readonly Dictionary<Entity, DispatchState> m_States = new Dictionary<Entity, DispatchState>();
         private readonly Dictionary<Entity, HoldMark> m_Marks = new Dictionary<Entity, HoldMark>();
+
+        /// <summary>
+        /// Each train's top speed, acceleration and braking, the weakest car
+        /// setting each, as TrainNavigationSystem combines them.
+        /// </summary>
+        private readonly Dictionary<Entity, TrainData> m_Pace = new Dictionary<Entity, TrainData>();
 
         /// <summary>The last round's decision per train, for the panel.</summary>
         internal IReadOnlyDictionary<Entity, DispatchState> States => m_States;
@@ -149,17 +171,19 @@ namespace SmartTrains.Dispatch
                     m_Dispatcher = new Dispatcher(layout);
                     m_LayoutVersion = m_Network.Version;
                 }
-                if (m_Step++ % kRoundInterval == 0)
-                {
-                    m_Watch.Restart();
-                    Round(layout.Network);
-                    m_Watch.Stop();
-                    CountTime(m_Watch.Elapsed.TotalMilliseconds);
-                }
+                m_Watch.Restart();
+                Round(layout.Network);
+                m_Watch.Stop();
+                CountTime(m_Watch.Elapsed.TotalMilliseconds);
                 if (Active)
+                {
                     PlaceMarks(layout.Network);
+                    SlowDown();
+                }
                 else if (m_Marks.Count > 0)
+                {
                     ClearAllMarks();
+                }
             }
             catch (Exception e)
             {
@@ -174,16 +198,13 @@ namespace SmartTrains.Dispatch
         private double m_TimeSum;
         private double m_TimeMax;
 
-        /// <summary>
-        /// Writes how long rounds take, every few thousand rounds. A round
-        /// runs every simulation step, so its cost matters.
-        /// </summary>
+        /// <summary>Writes how long rounds take, every thousand rounds.</summary>
         private void CountTime(double ms)
         {
             m_TimedRounds++;
             m_TimeSum += ms;
             m_TimeMax = Math.Max(m_TimeMax, ms);
-            if (m_TimedRounds < 5000)
+            if (m_TimedRounds < 1000)
                 return;
             Mod.Log.Info($"Dispatcher: {m_TimedRounds} rounds for {m_States.Count} trains, {m_TimeSum / m_TimedRounds:0.00} ms on average, {m_TimeMax:0.0} ms at most.");
             m_TimedRounds = 0;
@@ -209,6 +230,7 @@ namespace SmartTrains.Dispatch
             uint frame = m_Simulation.frameIndex;
             var inputs = new List<TrainInput>();
             var trains = new List<(Entity Train, TrainRoute Route)>();
+            m_Pace.Clear();
             using (NativeArray<Entity> entities = m_TrainQuery.ToEntityArray(Allocator.Temp))
             {
                 foreach (Entity train in entities)
@@ -469,11 +491,39 @@ namespace SmartTrains.Dispatch
                 // Changing track needs the route rewritten in the game, which
                 // comes later; until then the dispatcher only holds trains.
                 MayChangeTrack = false,
+                Speed = math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity),
+                DepartureIn = DepartureIn(train, frame),
             };
             input.Route.AddRange(route.Moves);
             input.Occupied.AddRange(route.Occupied);
             MeasureTrain(train, out input.Length, out input.LookAhead);
             return input;
+        }
+
+        /// <summary>
+        /// Seconds of train movement until the train may leave the platform
+        /// it boards at; -1 if it is not boarding. The game lets it go at its
+        /// departure frame at the earliest, and later if passengers or cargo
+        /// are not aboard yet, so this is a lower bound.
+        /// </summary>
+        private float DepartureIn(Entity train, uint frame)
+        {
+            EntityManager em = EntityManager;
+            bool boarding = false;
+            uint departure = 0;
+            if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger) && (passenger.m_State & PublicTransportFlags.Boarding) != 0)
+            {
+                boarding = true;
+                departure = passenger.m_DepartureFrame;
+            }
+            if (em.TryGetComponent(train, out Game.Vehicles.CargoTransport cargo) && (cargo.m_State & CargoTransportFlags.Boarding) != 0)
+            {
+                boarding = true;
+                departure = math.max(departure, cargo.m_DepartureFrame);
+            }
+            if (!boarding)
+                return -1f;
+            return departure > frame ? (departure - frame) * kSecondsPerFrame : 0f;
         }
 
         private float BaseRank(Entity train)
@@ -498,13 +548,15 @@ namespace SmartTrains.Dispatch
         /// The train's length, as VehicleUtils.CalculateLength has it, and how
         /// far ahead it needs track granted: its braking distance from top
         /// speed plus the game's signal distance (VehicleUtils), with the
-        /// slowest-braking car setting the pace.
+        /// slowest-braking car setting the pace. Keeps the train's pace in
+        /// <see cref="m_Pace"/> for <see cref="SlowDown"/>.
         /// </summary>
         private void MeasureTrain(Entity train, out float length, out float lookAhead)
         {
             EntityManager em = EntityManager;
             length = 0f;
             float speed = float.MaxValue;
+            float acceleration = float.MaxValue;
             float braking = float.MaxValue;
             DynamicBuffer<LayoutElement> layout = em.GetBuffer<LayoutElement>(train, true);
             for (int i = 0; i < layout.Length; i++)
@@ -514,6 +566,7 @@ namespace SmartTrains.Dispatch
                     continue;
                 length += math.csum(data.m_AttachOffsets);
                 speed = math.min(speed, data.m_MaxSpeed);
+                acceleration = math.min(acceleration, data.m_Acceleration);
                 braking = math.min(braking, data.m_Braking);
             }
             if (speed == float.MaxValue || braking <= 0f)
@@ -522,6 +575,7 @@ namespace SmartTrains.Dispatch
                 return;
             }
             lookAhead = 0.5f * speed * speed / braking + 4f * speed + kLookAheadMargin;
+            m_Pace[train] = new TrainData { m_MaxSpeed = speed, m_Acceleration = acceleration, m_Braking = braking };
         }
 
         // ---- Holding ----
@@ -574,6 +628,47 @@ namespace SmartTrains.Dispatch
                     return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Slows held trains to the dispatcher's advice, so that they roll up
+        /// to their hold as it frees instead of stopping in front of it and
+        /// starting again from a standstill.
+        ///
+        /// Only trains whose hold is in place: a train already past the point
+        /// where it could stop runs through, and slowing it would only keep it
+        /// on the track longer.
+        /// </summary>
+        private void SlowDown()
+        {
+            EntityManager em = EntityManager;
+            foreach (KeyValuePair<Entity, DispatchState> entry in m_States)
+            {
+                Entity train = entry.Key;
+                DispatchState state = entry.Value;
+                float advice = state.Order.SpeedAdvice;
+                if (!state.Holding || advice <= 0f)
+                    continue;
+                if (!m_Marks.TryGetValue(train, out HoldMark mark) || mark.Lane != state.HoldLane)
+                    continue;
+                if (!m_Pace.TryGetValue(train, out TrainData pace) || !em.Exists(train))
+                    continue;
+
+                // TrainNavigationSystem starts from TrainNavigation.m_Speed and
+                // ends its step between one step of braking below it and one
+                // step of acceleration above it, as far as track and signals
+                // allow. So the speed comes down no faster than the train
+                // brakes, and is set a step of acceleration below the target,
+                // for the game to end the step at the target.
+                TrainNavigation navigation = em.GetComponentData<TrainNavigation>(train);
+                float target = math.max(advice, navigation.m_Speed - pace.m_Braking * kStepSeconds);
+                float rise = VehicleUtils.CalculateSpeedRange(pace, target, kStepSeconds).max - target;
+                float start = math.max(0f, target - rise);
+                if (start >= navigation.m_Speed)
+                    continue;
+                navigation.m_Speed = start;
+                em.SetComponentData(train, navigation);
+            }
         }
     }
 }

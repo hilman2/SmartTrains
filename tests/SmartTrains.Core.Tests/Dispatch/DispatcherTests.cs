@@ -162,6 +162,25 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void ACutGrantEndsWhereTheTrainCanWaitNotInAJunction()
+        {
+            // Round 1: train 1 alone, granted through the loop onto the single
+            // track. Round 2: train 2 has come onto that single track from the
+            // east. Cut back to just before it, the grant would end on the
+            // east turnout E1, and train 1 would stand on it, in the way of
+            // train 2 going into the loop. It must wait on the loop track.
+            var (n, l, d) = Loop();
+            d.Dispatch(new[] { Train(1, 20, East(n, l)) });
+
+            List<TrainOrder> orders = d.Dispatch(new[] { Train(1, 20, East(n, l)), Train(2, 10, West(n, l)) });
+
+            TrainOrder first = Order(orders, 1);
+            Assert.Equal(2, first.GrantedEnd);
+            Assert.Equal(3, first.HoldAt);
+            Assert.Equal(2, first.WaitingFor);
+        }
+
+        [Fact]
         public void TheCommittedPartOfAGrantIsNeverCut()
         {
             // As above, but the game has already reserved the upper turnout
@@ -424,6 +443,28 @@ namespace SmartTrains.Core.Tests.Dispatch
 
             Assert.Equal(1, Order(orders, 2).WaitingFor);
             Assert.Equal(-1, Order(orders, 1).HoldAt);
+        }
+
+        [Fact]
+        public void ACutGrantDoesNotLeaveATrainOnTheSingleTrack()
+        {
+            // Round 1: train 1 alone, granted over the single track into the
+            // east loop. Round 2: train 2 stands on its loop track, facing it.
+            // The last place to wait before train 2 is not the single track,
+            // which train 2 needs to get out: train 1 stays in the west loop.
+            TwoLoops t = BuildTwoLoops();
+            TrackNetwork n = t.Network;
+            var d = new Dispatcher(new TrackLayout(n));
+            Move[] east = { M(n, t.A, true), M(n, t.AJ, true), M(n, t.S, true), M(n, t.KP, true), M(n, t.P, true) };
+            d.Dispatch(new[] { Train(1, 30, east) });
+
+            TrainInput train = Train(1, 30, east);
+            train.MayChangeTrack = false;
+            TrainInput facing = Train(2, 10, M(n, t.P, false), M(n, t.KP, false), M(n, t.S, false), M(n, t.AJ, false), M(n, t.A, false));
+            TrainOrder order = Order(d.Dispatch(new[] { train, facing }), 1);
+
+            Assert.Equal(1, order.HoldAt);
+            Assert.Equal(2, order.WaitingFor);
         }
 
         [Fact]
