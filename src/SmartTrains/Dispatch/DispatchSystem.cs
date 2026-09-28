@@ -435,7 +435,7 @@ namespace SmartTrains.Dispatch
                 // a crossing they both need, each held for the other, sort
                 // themselves out: the one that has it runs through and frees
                 // it. Only if both have come to a stop is it a circle.
-                if (math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity) >= 0.1f)
+                if (math.length(em.GetComponentData<Game.Objects.Moving>(TrainReader.HeadOf(em, train)).m_Velocity) >= 0.1f)
                     continue;
                 if (state.Holding && state.WaitingFor != Entity.Null)
                 {
@@ -529,7 +529,8 @@ namespace SmartTrains.Dispatch
             Entity prefab = em.GetComponentData<PrefabRef>(train).m_Prefab;
             if (!em.TryGetComponent(prefab, out TrainData data) || (data.m_TrackType & Game.Net.TrackTypes.Train) == 0)
                 return null;
-            if (!em.HasComponent<TrainCurrentLane>(train))
+            Entity head = TrainReader.HeadOf(em, train);
+            if (!em.HasComponent<TrainCurrentLane>(head))
                 return null;
 
             route = RouteReader.Read(em, network, train);
@@ -550,7 +551,7 @@ namespace SmartTrains.Dispatch
                 // Changing track needs the route rewritten in the game, which
                 // comes later; until then the dispatcher only holds trains.
                 MayChangeTrack = false,
-                Speed = math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity),
+                Speed = math.length(em.GetComponentData<Game.Objects.Moving>(head).m_Velocity),
                 DepartureIn = DepartureIn(train, frame),
             };
             input.Route.AddRange(route.Moves);
@@ -707,14 +708,16 @@ namespace SmartTrains.Dispatch
                 // allow. So the speed comes down no faster than the train
                 // brakes, and is set a step of acceleration below the target,
                 // for the game to end the step at the target.
-                TrainNavigation navigation = em.GetComponentData<TrainNavigation>(train);
+                // The game reads the head's navigation; see TrainReader.HeadOf.
+                Entity head = TrainReader.HeadOf(em, train);
+                TrainNavigation navigation = em.GetComponentData<TrainNavigation>(head);
                 float target = math.max(advice, navigation.m_Speed - pace.m_Braking * kStepSeconds);
                 float rise = VehicleUtils.CalculateSpeedRange(pace, target, kStepSeconds).max - target;
                 float start = math.max(0f, target - rise);
                 if (start >= navigation.m_Speed)
                     continue;
                 navigation.m_Speed = start;
-                em.SetComponentData(train, navigation);
+                em.SetComponentData(head, navigation);
             }
         }
     }

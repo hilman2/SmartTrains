@@ -173,7 +173,7 @@ namespace SmartTrains.Monitor
                     row.LineColor = $"#{color.m_Color.r:x2}{color.m_Color.g:x2}{color.m_Color.b:x2}";
             }
 
-            row.Moving = math.length(em.GetComponentData<Game.Objects.Moving>(train).m_Velocity) >= kStandingSpeed;
+            row.Moving = math.length(em.GetComponentData<Game.Objects.Moving>(HeadOf(em, train)).m_Velocity) >= kStandingSpeed;
             Blocker blocker = em.GetComponentData<Blocker>(train);
             PathFlags path = em.GetComponentData<PathOwner>(train).m_State;
             Entity blockingTrain = TrainOf(blocker.m_Blocker);
@@ -233,6 +233,22 @@ namespace SmartTrains.Monitor
         private Entity TrainOf(Entity blocker)
         {
             return TrainOf(m_EntityManager, blocker);
+        }
+
+        /// <summary>
+        /// The car at the head of the train: the first in its layout, which
+        /// the game steers the train by (TrainNavigationSystem). That is the
+        /// controller only until the train first reverses: VehicleUtils.
+        /// ReverseTrain turns the layout around and leaves the controller,
+        /// which keeps the train's route, navigation lanes and blocker, at the
+        /// tail. Where the train is, how fast, and its navigation speed are
+        /// read from and written to the head.
+        /// </summary>
+        public static Entity HeadOf(EntityManager em, Entity train)
+        {
+            if (em.TryGetBuffer(train, true, out DynamicBuffer<LayoutElement> layout) && layout.Length > 0)
+                return layout[0].m_Vehicle;
+            return train;
         }
 
         /// <summary>

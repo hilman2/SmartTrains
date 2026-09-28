@@ -89,9 +89,11 @@ namespace SmartTrains.Monitor
                 return;
             }
             string line = em.TryGetComponent(train, out Game.Routes.CurrentRoute route) ? NameText.Of(names, em, route.m_Route) : "no line";
-            float3 position = em.TryGetComponent(train, out Game.Objects.Transform transform) ? transform.m_Position : default;
-            float speed = em.TryGetComponent(train, out Game.Objects.Moving moving) ? math.length(moving.m_Velocity) : 0f;
-            text.AppendLine($"  #{train.Index} ({line}) at ({position.x:0}, {position.y:0}, {position.z:0}), speed {speed:0.0} m/s, standing {standingMinutes(train):0} min");
+            Entity head = TrainReader.HeadOf(em, train);
+            float3 position = em.TryGetComponent(head, out Game.Objects.Transform transform) ? transform.m_Position : default;
+            float speed = em.TryGetComponent(head, out Game.Objects.Moving moving) ? math.length(moving.m_Velocity) : 0f;
+            string reversed = head != train ? $", reversed: head is car #{head.Index}" : "";
+            text.AppendLine($"  #{train.Index} ({line}) at ({position.x:0}, {position.y:0}, {position.z:0}), speed {speed:0.0} m/s, standing {standingMinutes(train):0} min{reversed}");
 
             if (em.TryGetComponent(train, out Blocker blocker))
             {
@@ -112,10 +114,28 @@ namespace SmartTrains.Monitor
             if (em.TryGetComponent(train, out Game.Vehicles.CargoTransport cargo))
                 text.AppendLine($"    cargo service: {cargo.m_State}, departure frame {cargo.m_DepartureFrame}");
 
-            if (em.TryGetComponent(train, out TrainCurrentLane current))
+            if (em.TryGetComponent(head, out TrainCurrentLane current))
             {
                 text.AppendLine($"    front on {Lane(em, current.m_Front.m_Lane)} at {current.m_Front.m_CurvePosition.y:0.00}, flags {current.m_Front.m_LaneFlags}");
                 text.AppendLine($"    rear on  {Lane(em, current.m_Rear.m_Lane)} at {current.m_Rear.m_CurvePosition.y:0.00}");
+            }
+            if (em.TryGetBuffer(train, true, out DynamicBuffer<LayoutElement> layout))
+            {
+                // Every lane a bogie of the train is on, from the head back:
+                // what the dispatcher counts as the track the train stands on.
+                var under = new List<string>();
+                for (int i = 0; i < layout.Length; i++)
+                {
+                    if (!em.TryGetComponent(layout[i].m_Vehicle, out TrainCurrentLane car))
+                        continue;
+                    foreach (Entity lane in new[] { car.m_Front.m_Lane, car.m_Rear.m_Lane })
+                    {
+                        string name = "#" + lane.Index;
+                        if (lane != Entity.Null && (under.Count == 0 || under[under.Count - 1] != name))
+                            under.Add(name);
+                    }
+                }
+                text.AppendLine($"    cars on lanes {string.Join(", ", under)}");
             }
             if (em.TryGetBuffer(train, true, out DynamicBuffer<TrainNavigationLane> lanes))
             {

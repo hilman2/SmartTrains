@@ -59,7 +59,10 @@ namespace SmartTrains.Dispatch
         public static TrainRoute Read(EntityManager em, TrackNetwork network, Entity train)
         {
             var route = new TrainRoute();
-            TrainCurrentLane current = em.GetComponentData<TrainCurrentLane>(train);
+            // The route starts at the head, which is not the controller once
+            // the train has reversed; the navigation lanes and the path stay
+            // with the controller.
+            TrainCurrentLane current = em.GetComponentData<TrainCurrentLane>(Monitor.TrainReader.HeadOf(em, train));
             float4 front = current.m_Front.m_CurvePosition;
             if (!TryAdd(route, network, current.m_Front.m_Lane, front.w >= front.x, RouteSource.Front, 0))
                 return route;

@@ -182,7 +182,8 @@ namespace SmartTrains.Monitor
                 return;
             PathFlags path = em.GetComponentData<PathOwner>(train).m_State;
             Entity target = em.TryGetComponent(train, out Target t) ? t.m_Target : Entity.Null;
-            bool endReached = em.TryGetComponent(train, out TrainCurrentLane lane) && (lane.m_Front.m_LaneFlags & TrainLaneFlags.EndReached) != 0;
+            Entity head = TrainReader.HeadOf(em, train);
+            bool endReached = em.TryGetComponent(head, out TrainCurrentLane lane) && (lane.m_Front.m_LaneFlags & TrainLaneFlags.EndReached) != 0;
 
             var row = new TrainRow();
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))
@@ -225,7 +226,7 @@ namespace SmartTrains.Monitor
                 Through = row.Through,
                 Returning = row.Returning,
                 StoodMinutes = m_Trains.StandingMinutes(train, m_SimulationSystem.frameIndex),
-                Position = em.TryGetComponent(train, out Game.Objects.Transform transform) ? transform.m_Position : default,
+                Position = em.TryGetComponent(head, out Game.Objects.Transform transform) ? transform.m_Position : default,
                 Passengers = row.Passengers,
                 LoadPercent = row.Cargo && row.LoadCapacity > 0 ? (int)math.round(100f * row.Load / row.LoadCapacity) : -1,
                 Resource = row.MainResource ?? "",

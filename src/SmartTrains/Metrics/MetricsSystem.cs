@@ -289,12 +289,13 @@ namespace SmartTrains.Metrics
                 details.Hold = state.Order.Reason.ToString();
             if (details.State == "Slowed")
                 details.Advice = state.Order.SpeedAdvice;
-            if (em.TryGetComponent(train, out Game.Objects.Transform transform))
+            Entity head = TrainReader.HeadOf(em, train);
+            if (em.TryGetComponent(head, out Game.Objects.Transform transform))
             {
                 details.X = transform.m_Position.x;
                 details.Z = transform.m_Position.z;
             }
-            if (em.TryGetComponent(train, out TrainCurrentLane current))
+            if (em.TryGetComponent(head, out TrainCurrentLane current))
             {
                 Entity lane = current.m_Front.m_Lane;
                 details.Lane = lane.Index;
@@ -433,7 +434,7 @@ namespace SmartTrains.Metrics
         private JsonLine AddTrain(JsonLine record, Entity train)
         {
             record.Add("train", train.Index).Add("v", train.Version);
-            if (EntityManager.Exists(train) && EntityManager.TryGetComponent(train, out Game.Objects.Transform transform))
+            if (EntityManager.Exists(train) && EntityManager.TryGetComponent(TrainReader.HeadOf(EntityManager, train), out Game.Objects.Transform transform))
                 record.Add("x", math.round(transform.m_Position.x)).Add("z", math.round(transform.m_Position.z));
             return record;
         }
