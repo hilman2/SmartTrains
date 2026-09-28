@@ -142,6 +142,42 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void AGrantIsCutWhereAnotherTrainNowStandsInItsWay()
+        {
+            // Round 1: train 1 alone, granted all the way through the loop.
+            // Round 2: train 2 has come to stand on the lower turnout W2,
+            // which overlaps the upper one W1 in train 1's grant. Train 1
+            // cannot pass it; kept, its grant of E1 would hold train 2 back
+            // from leaving, and the two would wait for each other.
+            var (n, l, d) = Loop();
+            Assert.Equal(-1, Assert.Single(d.Dispatch(new[] { Train(1, 20, East(n, l)) })).HoldAt);
+
+            TrainInput standing = Train(2, 5, M(n, l.W2, true), M(n, l.L2, true), M(n, l.E2, true), M(n, l.S2, true));
+            List<TrainOrder> orders = d.Dispatch(new[] { Train(1, 20, East(n, l)), standing });
+
+            TrainOrder first = Order(orders, 1);
+            Assert.Equal(1, first.HoldAt);
+            Assert.Equal(2, first.WaitingFor);
+            Assert.Equal(-1, Order(orders, 2).HoldAt);
+        }
+
+        [Fact]
+        public void TheCommittedPartOfAGrantIsNeverCut()
+        {
+            // As above, but the game has already reserved the upper turnout
+            // for train 1: it is too close to stop, and keeps it.
+            var (n, l, d) = Loop();
+            d.Dispatch(new[] { Train(1, 20, East(n, l)) });
+
+            TrainInput first = Train(1, 20, East(n, l));
+            first.Committed = 1;
+            TrainInput standing = Train(2, 5, M(n, l.W2, true), M(n, l.L2, true), M(n, l.E2, true), M(n, l.S2, true));
+            List<TrainOrder> orders = d.Dispatch(new[] { first, standing });
+
+            Assert.True(Order(orders, 1).GrantedEnd >= 1);
+        }
+
+        [Fact]
         public void AGrantIsNeverTakenBack()
         {
             var (n, l, d) = Loop();

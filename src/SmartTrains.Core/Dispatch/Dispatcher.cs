@@ -202,16 +202,27 @@ namespace SmartTrains.Core.Dispatch
             m_Fronts.Clear();
             foreach (TrainInput train in trains)
                 m_Fronts[train.Id] = Front(train);
+            // Where the trains are comes first, for all of them: a section a
+            // train is in counts as occupied even if it is also granted to it,
+            // and the grants below are checked against where trains stand.
+            foreach (TrainInput train in trains)
+            {
+                foreach (Move move in train.Occupied)
+                    Hold(holdings, train, move.Lane, move.Forward, occupies: true);
+            }
             foreach (TrainInput train in trains)
             {
                 routes[train.Id] = train.Route;
-                int end = Math.Max(train.Committed, GrantedIndex(train));
-                end = Math.Min(end, train.Route.Count - 1);
+                int end = Math.Min(Math.Max(train.Committed, GrantedIndex(train)), train.Route.Count - 1);
+                // A grant from an earlier round is cut back where another
+                // train now stands in the way, e.g. one the game drove there
+                // on its own. The granted train cannot get past it, and the
+                // rest of the grant would only keep others from the track.
+                // What the game has reserved stays: the train may be too
+                // close to stop.
+                if (end > train.Committed)
+                    end = Math.Max(train.Committed, Math.Min(end, Unobstructed(train, train.Route, end, holdings)));
                 granted[train.Id] = end;
-                // Where the train is comes first, so that a section it is in
-                // counts as occupied even if it is also granted to it.
-                foreach (Move move in train.Occupied)
-                    Hold(holdings, train, move.Lane, move.Forward, occupies: true);
                 for (int i = 0; i <= end; i++)
                     Hold(holdings, train, train.Route[i].Lane, train.Route[i].Forward, occupies: false);
             }
@@ -518,6 +529,63 @@ namespace SmartTrains.Core.Dispatch
         }
 
         /// <summary>
+        /// How far along <c>route[0..end]</c> the train can get past the
+        /// trains standing or running there: the index of the last lane it
+        /// can reach. A train on a junction lane on the way, or across it,
+        /// stops it before that lane. A train in a section on the way stops it
+        /// before the section if it comes the other way, and at the end of the
+        /// section if it runs the same way, since the train may close up
+        /// behind it.
+        /// </summary>
+        private int Unobstructed(TrainInput train, List<Move> route, int end, Holdings holdings)
+        {
+            (int frontSection, float frontAlong) = m_Fronts.TryGetValue(train.Id, out (int, float) f) ? f : (-1, 0f);
+            for (int i = 1; i <= end && i < route.Count; i++)
+            {
+                int lane = route[i].Lane;
+                int section = m_Layout.SectionOf(lane);
+                if (section < 0)
+                {
+                    if (OccupiedByOther(holdings, lane, train.Id, out _))
+                        return i - 1;
+                    continue;
+                }
+                int last = i;
+                while (last + 1 < route.Count && m_Layout.SectionOf(route[last + 1].Lane) == section)
+                    last++;
+                if (holdings.Sections.TryGetValue(section, out List<SectionUser> users))
+                {
+                    bool forward = SectionForward(section, route[i]);
+                    foreach (SectionUser user in users)
+                    {
+                        if (user.Train == train.Id || !user.Occupies)
+                            continue;
+                        if (user.Forward != forward)
+                            return i - 1;
+                        if (section != frontSection || user.Along > frontAlong)
+                            return Math.Min(end, last);
+                    }
+                }
+                i = last;
+            }
+            return end;
+        }
+
+        /// <summary>Whether a train other than <paramref name="train"/> is on the junction lane or on one crossing or touching it.</summary>
+        private bool OccupiedByOther(Holdings holdings, int lane, long train, out long other)
+        {
+            if (holdings.OccupiedLanes.TryGetValue(lane, out other) && other != train)
+                return true;
+            foreach (int overlap in m_Network.Overlaps(lane))
+            {
+                if (holdings.OccupiedLanes.TryGetValue(overlap, out other) && other != train)
+                    return true;
+            }
+            other = 0;
+            return false;
+        }
+
+        /// <summary>
         /// The first train on <c>route[0..end]</c>, the track the train is on
         /// or already granted, that is ahead of it in its direction; with the
         /// section it is in, or -1 for a junction area. Returns (0, -1) if
@@ -533,8 +601,9 @@ namespace SmartTrains.Core.Dispatch
                 int section = m_Layout.SectionOf(lane);
                 if (section < 0)
                 {
-                    // On a junction lane on the way, another train is ahead.
-                    if (holdings.OccupiedLanes.TryGetValue(lane, out long other) && other != train.Id)
+                    // On a junction lane on the way, or across it, another
+                    // train is in the way.
+                    if (OccupiedByOther(holdings, lane, train.Id, out long other))
                         return (other, -1);
                     continue;
                 }
