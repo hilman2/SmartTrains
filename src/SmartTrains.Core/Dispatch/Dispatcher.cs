@@ -111,6 +111,12 @@ namespace SmartTrains.Core.Dispatch
         public float Rank;
 
         /// <summary>
+        /// The grant the train had from the last round was cut back in this
+        /// one, because another train now stands in its way.
+        /// </summary>
+        public bool CutBack;
+
+        /// <summary>
         /// Metres per second the held train should slow to, so that it
         /// reaches the lane it waits in front of about when that lane frees;
         /// 0 for no advice. The hold stays: if the lane frees later, the
@@ -220,6 +226,7 @@ namespace SmartTrains.Core.Dispatch
             var holdings = new Holdings();
             var granted = new Dictionary<long, int>();
             var routes = new Dictionary<long, List<Move>>();
+            var cutBack = new HashSet<long>();
 
             m_Fronts.Clear();
             foreach (TrainInput train in trains)
@@ -246,7 +253,10 @@ namespace SmartTrains.Core.Dispatch
                 {
                     int reach = Unobstructed(train, train.Route, end, holdings);
                     if (reach < end)
+                    {
                         end = WaitingPlaceBefore(train, train.Route, reach);
+                        cutBack.Add(train.Id);
+                    }
                 }
                 granted[train.Id] = end;
                 Grant(train, train.Route, 0, end, holdings);
@@ -261,7 +271,7 @@ namespace SmartTrains.Core.Dispatch
             });
             foreach (TrainInput train in ranked)
             {
-                var order = new TrainOrder { Train = train.Id, Rank = Rank(train) };
+                var order = new TrainOrder { Train = train.Id, Rank = Rank(train), CutBack = cutBack.Contains(train.Id) };
                 orders[train.Id] = order;
                 if (train.Route.Count == 0)
                     continue;

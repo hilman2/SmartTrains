@@ -116,6 +116,7 @@ namespace SmartTrains.Dispatch
         private SimulationSystem m_Simulation;
         private UI.TrainsUISystem m_TrainsUI;
         private Game.UI.NameSystem m_Names;
+        private Metrics.MetricsSystem m_Metrics;
         private EntityQuery m_TrainQuery;
 
         private Dispatcher m_Dispatcher;
@@ -143,6 +144,7 @@ namespace SmartTrains.Dispatch
             m_Simulation = World.GetOrCreateSystemManaged<SimulationSystem>();
             m_TrainsUI = World.GetOrCreateSystemManaged<UI.TrainsUISystem>();
             m_Names = World.GetOrCreateSystemManaged<Game.UI.NameSystem>();
+            m_Metrics = World.GetOrCreateSystemManaged<Metrics.MetricsSystem>();
             m_TrainQuery = GetEntityQuery(TrainReader.QueryDesc());
         }
 
@@ -180,9 +182,11 @@ namespace SmartTrains.Dispatch
                     PlaceMarks(layout.Network);
                     SlowDown();
                 }
-                else if (m_Marks.Count > 0)
+                else
                 {
-                    ClearAllMarks();
+                    m_Slowed.Clear();
+                    if (m_Marks.Count > 0)
+                        ClearAllMarks();
                 }
             }
             catch (Exception e)
@@ -198,9 +202,36 @@ namespace SmartTrains.Dispatch
         private double m_TimeSum;
         private double m_TimeMax;
 
+        // The same, counted separately for the metrics; see TakeRoundTimes.
+        private int m_MetricRounds;
+        private double m_MetricTimeSum;
+        private double m_MetricTimeMax;
+
+        /// <summary>
+        /// Rounds run since the last call, and their mean and longest time in
+        /// milliseconds; starts counting afresh.
+        /// </summary>
+        internal (int Rounds, double MeanMs, double MaxMs) TakeRoundTimes()
+        {
+            var times = (m_MetricRounds, m_MetricRounds > 0 ? m_MetricTimeSum / m_MetricRounds : 0.0, m_MetricTimeMax);
+            m_MetricRounds = 0;
+            m_MetricTimeSum = 0;
+            m_MetricTimeMax = 0;
+            return times;
+        }
+
+        /// <summary>Trains running at the dispatcher's speed advice since the last round; see SlowDown.</summary>
+        private readonly HashSet<Entity> m_Slowed = new HashSet<Entity>();
+
+        /// <summary>Whether the train runs at the dispatcher's speed advice.</summary>
+        internal bool IsSlowing(Entity train) => m_Slowed.Contains(train);
+
         /// <summary>Writes how long rounds take, every thousand rounds.</summary>
         private void CountTime(double ms)
         {
+            m_MetricRounds++;
+            m_MetricTimeSum += ms;
+            m_MetricTimeMax = Math.Max(m_MetricTimeMax, ms);
             m_TimedRounds++;
             m_TimeSum += ms;
             m_TimeMax = Math.Max(m_TimeMax, ms);
@@ -264,6 +295,8 @@ namespace SmartTrains.Dispatch
                 if (order.WaitingFor != 0)
                     state.WaitingFor = EntityKey.ToEntity(order.WaitingFor);
                 states[train] = state;
+                if (order.CutBack)
+                    m_Metrics.GrantCut(train, state, Active);
             }
             m_States.Clear();
             foreach (KeyValuePair<Entity, DispatchState> entry in states)
@@ -321,6 +354,13 @@ namespace SmartTrains.Dispatch
         private readonly Dictionary<Entity, uint> m_HeldSince = new Dictionary<Entity, uint>();
 
         /// <summary>
+        /// Trains let go for being held too long, until the dispatcher stops
+        /// holding them: each such hold counts once in the metrics, though
+        /// the train is let go again every round.
+        /// </summary>
+        private readonly HashSet<Entity> m_LongHoldsLetGo = new HashSet<Entity>();
+
+        /// <summary>
         /// Lets go of trains held longer than <see cref="kMaxHoldMinutes"/>,
         /// and says why they were held. What counts is how long the
         /// dispatcher has held the train, not how long it has stood: a train
@@ -342,7 +382,10 @@ namespace SmartTrains.Dispatch
                     ended.Add(train);
             }
             foreach (Entity train in ended)
+            {
                 m_HeldSince.Remove(train);
+                m_LongHoldsLetGo.Remove(train);
+            }
             foreach (Entity train in stillHeld)
             {
                 if (!m_HeldSince.ContainsKey(train))
@@ -357,6 +400,8 @@ namespace SmartTrains.Dispatch
                     continue;
                 state.HoldLane = Entity.Null;
                 state.Released = true;
+                if (m_LongHoldsLetGo.Add(train))
+                    m_Metrics.LongHoldReleased(train, state, Active);
                 if (Active && m_LoggedLongHolds.Add(train))
                 {
                     string by = state.WaitingFor != Entity.Null ? $"#{state.WaitingFor.Index}" : "nobody known";
@@ -404,6 +449,7 @@ namespace SmartTrains.Dispatch
                     waits[EntityKey.Of(train)] = EntityKey.Of(blocker);
             }
 
+            var circles = new HashSet<string>();
             foreach (List<long> circle in WaitCycles.Find(waits))
             {
                 // Let go of a held train that can then move: one the game
@@ -432,8 +478,21 @@ namespace SmartTrains.Dispatch
                 released.HoldLane = Entity.Null;
                 released.Released = true;
                 LogCircle(release, circle);
+
+                // A circle lasts as long as the trains in it stand, and is
+                // found again every round; it counts once, when it forms.
+                var members = new List<long>(circle);
+                members.Sort();
+                string circleKey = string.Join(",", members);
+                circles.Add(circleKey);
+                if (!m_CirclesLastRound.Contains(circleKey))
+                    m_Metrics.Circle(circle, release, Active);
             }
+            m_CirclesLastRound = circles;
         }
+
+        /// <summary>The circles found in the last round, each as its sorted train keys.</summary>
+        private HashSet<string> m_CirclesLastRound = new HashSet<string>();
 
         /// <summary>Circles already written to the log, so a circle that lasts is not written every round.</summary>
         private readonly HashSet<string> m_LoggedCircles = new HashSet<string>();
@@ -545,37 +604,23 @@ namespace SmartTrains.Dispatch
         }
 
         /// <summary>
-        /// The train's length, as VehicleUtils.CalculateLength has it, and how
-        /// far ahead it needs track granted: its braking distance from top
-        /// speed plus the game's signal distance (VehicleUtils), with the
-        /// slowest-braking car setting the pace. Keeps the train's pace in
-        /// <see cref="m_Pace"/> for <see cref="SlowDown"/>.
+        /// The train's length, and how far ahead it needs track granted: its
+        /// braking distance from top speed plus the game's signal distance
+        /// (VehicleUtils). Keeps the train's pace in <see cref="m_Pace"/> for
+        /// <see cref="SlowDown"/>.
         /// </summary>
         private void MeasureTrain(Entity train, out float length, out float lookAhead)
         {
-            EntityManager em = EntityManager;
-            length = 0f;
-            float speed = float.MaxValue;
-            float acceleration = float.MaxValue;
-            float braking = float.MaxValue;
-            DynamicBuffer<LayoutElement> layout = em.GetBuffer<LayoutElement>(train, true);
-            for (int i = 0; i < layout.Length; i++)
-            {
-                Entity prefab = em.GetComponentData<PrefabRef>(layout[i].m_Vehicle).m_Prefab;
-                if (!em.TryGetComponent(prefab, out TrainData data))
-                    continue;
-                length += math.csum(data.m_AttachOffsets);
-                speed = math.min(speed, data.m_MaxSpeed);
-                acceleration = math.min(acceleration, data.m_Acceleration);
-                braking = math.min(braking, data.m_Braking);
-            }
-            if (speed == float.MaxValue || braking <= 0f)
+            TrainMeasure measure = TrainMeasure.Of(EntityManager, train);
+            length = measure.Length;
+            if (measure.Cars == 0 || measure.Braking <= 0f)
             {
                 lookAhead = 1000f;
                 return;
             }
-            lookAhead = 0.5f * speed * speed / braking + 4f * speed + kLookAheadMargin;
-            m_Pace[train] = new TrainData { m_MaxSpeed = speed, m_Acceleration = acceleration, m_Braking = braking };
+            float speed = measure.MaxSpeed;
+            lookAhead = 0.5f * speed * speed / measure.Braking + 4f * speed + kLookAheadMargin;
+            m_Pace[train] = new TrainData { m_MaxSpeed = speed, m_Acceleration = measure.Acceleration, m_Braking = measure.Braking };
         }
 
         // ---- Holding ----
@@ -642,6 +687,7 @@ namespace SmartTrains.Dispatch
         private void SlowDown()
         {
             EntityManager em = EntityManager;
+            m_Slowed.Clear();
             foreach (KeyValuePair<Entity, DispatchState> entry in m_States)
             {
                 Entity train = entry.Key;
@@ -653,6 +699,7 @@ namespace SmartTrains.Dispatch
                     continue;
                 if (!m_Pace.TryGetValue(train, out TrainData pace) || !em.Exists(train))
                     continue;
+                m_Slowed.Add(train);
 
                 // TrainNavigationSystem starts from TrainNavigation.m_Speed and
                 // ends its step between one step of braking below it and one

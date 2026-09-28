@@ -170,7 +170,7 @@ namespace SmartTrains.Core.Tests.Dispatch
             // east turnout E1, and train 1 would stand on it, in the way of
             // train 2 going into the loop. It must wait on the loop track.
             var (n, l, d) = Loop();
-            d.Dispatch(new[] { Train(1, 20, East(n, l)) });
+            Assert.False(Assert.Single(d.Dispatch(new[] { Train(1, 20, East(n, l)) })).CutBack);
 
             List<TrainOrder> orders = d.Dispatch(new[] { Train(1, 20, East(n, l)), Train(2, 10, West(n, l)) });
 
@@ -178,6 +178,8 @@ namespace SmartTrains.Core.Tests.Dispatch
             Assert.Equal(2, first.GrantedEnd);
             Assert.Equal(3, first.HoldAt);
             Assert.Equal(2, first.WaitingFor);
+            Assert.True(first.CutBack);
+            Assert.False(Order(orders, 2).CutBack);
         }
 
         [Fact]

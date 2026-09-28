@@ -1,0 +1,42 @@
+# The metrics report, in a pinned Python image with DuckDB.
+#
+#   docker compose -f tools/metrics/compose.yml run --rm report
+#   docker compose -f tools/metrics/compose.yml run --rm report --skip-minutes 60 --sqlite metrics.sqlite
+#   docker compose -f tools/metrics/compose.yml run --rm check
+#
+# METRICS_DIR is the Metrics folder the mod writes to; it defaults to the one
+# under the game's user folder. The folder is mounted read-only. The report
+# runs in /out, which is tools/metrics/out, so a relative --sqlite name lands
+# there. (Git Bash would turn an absolute /out/... into a Windows path.)
+services:
+  report:
+    image: smarttrains-metrics
+    build: .
+    user: "1000:1000"
+    read_only: true
+    working_dir: /out
+    volumes:
+      - ./:/app:ro
+      - "${METRICS_DIR:-${USERPROFILE}/AppData/LocalLow/Colossal Order/Cities Skylines II/ModsData/SmartTrains/Metrics}:/metrics:ro"
+      - ./out:/out
+    tmpfs:
+      - /tmp
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    entrypoint: ["python", "/app/report.py", "/metrics"]
+
+  check:
+    image: smarttrains-metrics
+    build: .
+    user: "1000:1000"
+    read_only: true
+    volumes:
+      - ./:/app:ro
+    tmpfs:
+      - /tmp
+    environment:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: /app
+    entrypoint: ["sh", "/app/check.sh"]

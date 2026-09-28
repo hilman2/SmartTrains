@@ -1,3 +1,4 @@
+using System.Reflection;
 using Colossal.IO.AssetDatabase;
 using Colossal.Logging;
 using Game;
@@ -20,9 +21,27 @@ namespace SmartTrains
 
         public static Setting Settings { get; private set; }
 
+        /// <summary>
+        /// The commit the mod was built from, with "-dirty" for a build with
+        /// uncommitted changes (see SmartTrains.csproj); the version number
+        /// if the build did not record it. Goes into the log and the metrics,
+        /// so that results can be traced to the code that produced them.
+        /// </summary>
+        public static string Build { get; } = ReadBuild();
+
+        private static string ReadBuild()
+        {
+            foreach (AssemblyMetadataAttribute attribute in typeof(Mod).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>())
+            {
+                if (attribute.Key == "Build" && !string.IsNullOrEmpty(attribute.Value))
+                    return attribute.Value;
+            }
+            return typeof(Mod).Assembly.GetName().Version.ToString();
+        }
+
         public void OnLoad(UpdateSystem updateSystem)
         {
-            Log.Info($"Loading Smart Trains {typeof(Mod).Assembly.GetName().Version}");
+            Log.Info($"Loading Smart Trains {typeof(Mod).Assembly.GetName().Version}, build {Build}");
             Settings = new Setting(this);
             AssetDatabase.global.LoadSettings("SmartTrains", Settings, new Setting(this));
             LocaleSource.RegisterAll();
@@ -34,6 +53,8 @@ namespace SmartTrains
             updateSystem.UpdateAt<Network.NetworkSystem>(SystemUpdatePhase.ModificationEnd);
             // Holds must be in place when the game reserves track for trains.
             updateSystem.UpdateBefore<Dispatch.DispatchSystem, TrainNavigationSystem>(SystemUpdatePhase.GameSimulation);
+            // Sees each round's decisions, and trains as they are before they move.
+            updateSystem.UpdateAfter<Metrics.MetricsSystem, Dispatch.DispatchSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<Dispatch.SaveCleanupSystem, TrimPathsSystem>(SystemUpdatePhase.Serialize);
         }
 

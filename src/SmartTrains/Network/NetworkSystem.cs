@@ -102,7 +102,11 @@ namespace SmartTrains.Network
             Layout = layout;
             Version++;
             if (network.Lanes.Count > 0)
-                Mod.Log.Info($"Track network: {layout.Summarize()}. Read in {watch.ElapsedMilliseconds} ms.");
+            {
+                LayoutSummary summary = layout.Summarize();
+                Mod.Log.Info($"Track network: {summary}. Read in {watch.ElapsedMilliseconds} ms.");
+                World.GetOrCreateSystemManaged<Metrics.MetricsSystem>().NetworkRead(Version, summary, watch.ElapsedMilliseconds);
+            }
         }
 
         private long m_Fingerprint;

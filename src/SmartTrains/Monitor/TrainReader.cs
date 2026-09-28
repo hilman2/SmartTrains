@@ -122,6 +122,25 @@ namespace SmartTrains.Monitor
 
         private TrainRow ReadTrain(Entity train, uint frame, Dispatch.DispatchState dispatch, bool dispatcherActive)
         {
+            TrainRow row = ReadState(train, frame, dispatch, dispatcherActive);
+            if (row == null)
+                return null;
+            uint frames = m_Clock.Observe(EntityKey.Of(train), !row.Moving, frame);
+            row.StandingMinutes = ToMinutes(frames);
+
+            ReadLoad(m_EntityManager, train, row);
+            ReadEnds(train, row);
+            return row;
+        }
+
+        /// <summary>
+        /// What the train is and does, without load, ends and standing time:
+        /// the kind of train, its line, whether it moves, why not, and who is
+        /// in its way. Cheap enough to call for every train at every
+        /// navigation step. Null for a train that is not a rail train.
+        /// </summary>
+        public TrainRow ReadState(Entity train, uint frame, Dispatch.DispatchState dispatch, bool dispatcherActive)
+        {
             EntityManager em = m_EntityManager;
             Entity prefab = em.GetComponentData<PrefabRef>(train).m_Prefab;
             if (!em.TryGetComponent(prefab, out TrainData trainData) || (trainData.m_TrackType & TrackTypes.Train) == 0)
@@ -173,12 +192,6 @@ namespace SmartTrains.Monitor
                 row.Blocker = blockingTrain;
             else if (row.Reason == WaitReason.AtSignal)
                 row.Blocker = dispatch.WaitingFor;
-
-            uint frames = m_Clock.Observe(EntityKey.Of(train), !row.Moving, frame);
-            row.StandingMinutes = ToMinutes(frames);
-
-            ReadLoad(em, train, row);
-            ReadEnds(train, row);
             return row;
         }
 

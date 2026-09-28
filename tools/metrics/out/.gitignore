@@ -1,0 +1,3 @@
+# Where the report writes its SQLite file (compose.yml mounts this folder at /out).
+*
+!.gitignore

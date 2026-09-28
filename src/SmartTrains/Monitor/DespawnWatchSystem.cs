@@ -120,11 +120,13 @@ namespace SmartTrains.Monitor
         private TimeSystem m_TimeSystem;
         private SimulationSystem m_SimulationSystem;
         private UI.TrainsUISystem m_Trains;
+        private Metrics.MetricsSystem m_Metrics;
 
         protected override void OnCreate()
         {
             base.OnCreate();
             m_NameSystem = World.GetOrCreateSystemManaged<NameSystem>();
+            m_Metrics = World.GetOrCreateSystemManaged<Metrics.MetricsSystem>();
             m_TimeSystem = World.GetOrCreateSystemManaged<TimeSystem>();
             m_SimulationSystem = World.GetOrCreateSystemManaged<SimulationSystem>();
             m_Trains = World.GetOrCreateSystemManaged<UI.TrainsUISystem>();
@@ -204,7 +206,9 @@ namespace SmartTrains.Monitor
                 Returning = row.Returning,
                 EndReached = endReached,
             });
-            if (DespawnClassifier.IsNormal(cause))
+            bool normal = DespawnClassifier.IsNormal(cause);
+            m_Metrics.Removed(train, cause, normal);
+            if (normal)
             {
                 DespawnHistory.Count(cause);
                 return;

@@ -73,6 +73,24 @@
     </PropertyGroup>
   </Target>
 
+  <!-- Records the commit the build comes from, e.g. "a8b8ec0" or
+       "a8b8ec0-dirty" with uncommitted changes, as assembly metadata "Build".
+       Mod.Build reads it, and the log and the metrics carry it, so that a
+       test result can be traced to the code that produced it. Without git
+       nothing is recorded, and Mod.Build falls back to the version. -->
+  <Target Name="StampBuild" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git describe --always --dirty --abbrev=7" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="BuildStamp" />
+      <Output TaskParameter="ExitCode" PropertyName="BuildStampExit" />
+    </Exec>
+    <ItemGroup Condition="'$(BuildStampExit)' == '0' And '$(BuildStamp)' != ''">
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>Build</_Parameter1>
+        <_Parameter2>$(BuildStamp)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <!-- The dispatching logic is compiled into the mod assembly, so the mod ships as a single DLL. -->
     <Compile Include="..\SmartTrains.Core\**\*.cs" Exclude="..\SmartTrains.Core\obj\**;..\SmartTrains.Core\bin\**" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
