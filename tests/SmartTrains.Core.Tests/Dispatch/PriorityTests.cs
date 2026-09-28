@@ -94,6 +94,49 @@ namespace SmartTrains.Core.Tests.Dispatch
         }
 
         [Fact]
+        public void AClaimNeverKeepsOutTheTrainTheClaimantWaitsFor()
+        {
+            // Two stations on single track, S1 and S2, with a double track
+            // between them too short to wait on. Train 1 stands in S1 and runs
+            // east through S2. Train 2, of higher rank, comes from the east
+            // through S2 and into S1, and waits for train 1 to leave S1. Its
+            // claim on S2 against the east direction must not keep train 1
+            // out: train 1 leaving is what train 2 waits for. Kept out, the
+            // two wait for each other (as they did in the game, at (1159,
+            // -1964), until the game removed both).
+            var b = new TrackBuilder()
+                .Point("S1w", 0, 0).Point("S1e", 200, 0)
+                .Point("De0", 220, 5).Point("De1", 300, 5).Point("Dw1", 300, -5).Point("Dw0", 220, -5)
+                .Point("S2w", 320, 0).Point("S2e", 520, 0)
+                .Point("Ee0", 540, 5).Point("Ee1", 940, 5).Point("Ew1", 940, -5).Point("Ew0", 540, -5);
+            long s1 = b.Lane("S1w", "S1e");
+            long j1 = b.Lane("S1e", "De0", LaneKind.Switch, twoWay: false);
+            long de = b.Lane("De0", "De1", twoWay: false);
+            long j2 = b.Lane("De1", "S2w", LaneKind.Switch, twoWay: false);
+            long s2 = b.Lane("S2w", "S2e");
+            long j3 = b.Lane("S2e", "Ee0", LaneKind.Switch, twoWay: false);
+            long ee = b.Lane("Ee0", "Ee1", twoWay: false);
+            long ew = b.Lane("Ew1", "Ew0", twoWay: false);
+            long j3b = b.Lane("Ew0", "S2e", LaneKind.Switch, twoWay: false);
+            long j2b = b.Lane("S2w", "Dw1", LaneKind.Switch, twoWay: false);
+            long dw = b.Lane("Dw1", "Dw0", twoWay: false);
+            long j1b = b.Lane("Dw0", "S1e", LaneKind.Switch, twoWay: false);
+            TrackNetwork n = b.Build();
+
+            TrainInput east = Train(1, 20, n, s1, j1, de, j2, s2, j3, ee);
+            var west = new TrainInput { Id = 2, BasePriority = 36, Length = 150f, LookAhead = 10000f, FrontRemaining = 10f, MayChangeTrack = false };
+            west.Route.AddRange(new[]
+            {
+                M(n, ew), M(n, j3b), new Move(n.IndexOf(s2), false), M(n, j2b), M(n, dw), M(n, j1b), new Move(n.IndexOf(s1), false),
+            });
+            west.Occupied.Add(west.Route[0]);
+            List<TrainOrder> orders = new Dispatcher(new TrackLayout(n)).Dispatch(new[] { east, west });
+
+            Assert.Equal(-1, Order(orders, 1).HoldAt);
+            Assert.Equal(1, Order(orders, 2).WaitingFor);
+        }
+
+        [Fact]
         public void ATrainWaitingBehindAnotherClaimsNothing()
         {
             // One-way section P, 600 m, then turnout J into W. The leader

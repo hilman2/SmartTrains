@@ -239,6 +239,9 @@ namespace SmartTrains.Core.Dispatch
 
             /// <summary>Sections claimed by a train that has waited long; see ClaimPriority.</summary>
             public readonly Dictionary<int, long> PrioritySections = new Dictionary<int, long>();
+
+            /// <summary>Per refused train, the sections and junction lanes of the way it was refused; see Inside.</summary>
+            public readonly Dictionary<long, (HashSet<int> Sections, HashSet<int> Lanes)> Refused = new Dictionary<long, (HashSet<int>, HashSet<int>)>();
         }
 
         /// <summary>Dispatches one round.</summary>
@@ -543,6 +546,7 @@ namespace SmartTrains.Core.Dispatch
             order.Reason = reason;
             order.WaitingFor = waitingFor;
             order.BlockedAt = blockedAt;
+            RecordRefused(train, route, end + 1, last, holdings);
             Claim(train, route, end + 1, last, holdings);
             // A train behind another waits for that one, not for a stream of
             // trains; claiming the way ahead would keep out the very train it
@@ -658,10 +662,9 @@ namespace SmartTrains.Core.Dispatch
                 bool forward = SectionForward(section, route[i]);
                 holdings.Sections.TryGetValue(section, out List<SectionUser> users);
                 // A claim keeps trains from entering the single track against
-                // the claimant; a train already on it must be let off it, or
-                // it would hold the claimant up for good.
+                // the claimant; see Inside for the trains it lets through.
                 if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward
-                    && !Occupies(users, train.Id))
+                    && !Inside(train, claim.Train, holdings))
                     return Refuse(order, HoldReason.GivingWay, claim.Train, i);
                 if (PriorityOver(train, holdings, holdings.PrioritySections, section, out long sectionClaimant))
                     return Refuse(order, HoldReason.GivingWay, sectionClaimant, i);
@@ -792,18 +795,6 @@ namespace SmartTrains.Core.Dispatch
             return (0, -1);
         }
 
-        private static bool Occupies(List<SectionUser> users, long train)
-        {
-            if (users == null)
-                return false;
-            foreach (SectionUser user in users)
-            {
-                if (user.Train == train && user.Occupies)
-                    return true;
-            }
-            return false;
-        }
-
         /// <summary>Whether <c>route[from..to]</c> reaches a lane outside the given section.</summary>
         private bool LeavesSection(List<Move> route, int from, int to, int section)
         {
@@ -905,25 +896,61 @@ namespace SmartTrains.Core.Dispatch
         /// <summary>
         /// Whether another train's priority claim on <paramref name="key"/>, a
         /// lane or a section as the dictionary holds them, keeps
-        /// <paramref name="train"/> out. It does not keep out a train that is
-        /// already on any of the claimed track: that train is in the way of the
-        /// claimant, and must be let out, whichever way it leaves.
+        /// <paramref name="train"/> out; see Inside for the trains it lets
+        /// through.
         /// </summary>
         private bool PriorityOver(TrainInput train, Holdings holdings, Dictionary<int, long> claims, int key, out long claimant)
         {
-            if (!claims.TryGetValue(key, out claimant) || claimant == train.Id)
+            return claims.TryGetValue(key, out claimant) && claimant != train.Id && !Inside(train, claimant, holdings);
+        }
+
+        /// <summary>Notes the way <c>route[from..to]</c> the train was refused, for Inside.</summary>
+        private void RecordRefused(TrainInput train, List<Move> route, int from, int to, Holdings holdings)
+        {
+            var sections = new HashSet<int>();
+            var lanes = new HashSet<int>();
+            for (int i = from; i <= to && i < route.Count; i++)
+            {
+                int section = m_Layout.SectionOf(route[i].Lane);
+                if (section < 0)
+                    lanes.Add(route[i].Lane);
+                else
+                    sections.Add(section);
+            }
+            holdings.Refused[train.Id] = (sections, lanes);
+        }
+
+        /// <summary>
+        /// Whether the train stands on the way the claimant was refused: in
+        /// one of its sections, or on or across one of its junction lanes.
+        /// The claimant's claims do not hold such a train back. It is in the
+        /// claimant's way, and the claimant can go only once it has left,
+        /// whichever way it leaves; kept out of a claimed section on its way
+        /// out, it would wait for the claimant while the claimant waits for
+        /// it.
+        /// </summary>
+        private bool Inside(TrainInput train, long claimant, Holdings holdings)
+        {
+            if (!holdings.Refused.TryGetValue(claimant, out (HashSet<int> Sections, HashSet<int> Lanes) way))
                 return false;
             foreach (Move move in train.Occupied)
             {
                 int section = m_Layout.SectionOf(move.Lane);
-                long holder;
-                if (section < 0 ? holdings.PriorityLanes.TryGetValue(move.Lane, out holder) : holdings.PrioritySections.TryGetValue(section, out holder))
+                if (section >= 0)
                 {
-                    if (holder == claimant)
-                        return false;
+                    if (way.Sections.Contains(section))
+                        return true;
+                    continue;
+                }
+                if (way.Lanes.Contains(move.Lane))
+                    return true;
+                foreach (int overlap in m_Network.Overlaps(move.Lane))
+                {
+                    if (way.Lanes.Contains(overlap))
+                        return true;
                 }
             }
-            return true;
+            return false;
         }
 
         // ---- Another track of a passing loop ----
