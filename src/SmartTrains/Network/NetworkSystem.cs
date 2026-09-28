@@ -105,7 +105,7 @@ namespace SmartTrains.Network
             {
                 LayoutSummary summary = layout.Summarize();
                 Mod.Log.Info($"Track network: {summary}. Read in {watch.ElapsedMilliseconds} ms.");
-                World.GetOrCreateSystemManaged<Metrics.MetricsSystem>().NetworkRead(Version, summary, watch.ElapsedMilliseconds);
+                World.GetOrCreateSystemManaged<Metrics.MetricsSystem>().NetworkRead(Version, layout, watch.ElapsedMilliseconds);
             }
         }
 

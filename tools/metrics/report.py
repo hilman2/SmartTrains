@@ -81,6 +81,24 @@ TABLES: dict[str, dict[str, str]] = {
         "junction": "BOOLEAN",
         "station": "INTEGER",
         "advice": "DOUBLE",
+        "holdLane": "INTEGER",
+        "blockedLane": "INTEGER",
+    },
+    "lane": {
+        "s": "VARCHAR",
+        "version": "INTEGER",
+        "lane": "INTEGER",
+        "kind": "VARCHAR",
+        "twoWay": "BOOLEAN",
+        "length": "DOUBLE",
+        "station": "INTEGER",
+        "section": "INTEGER",
+        "area": "INTEGER",
+        "group": "INTEGER",
+        "x0": "DOUBLE",
+        "z0": "DOUBLE",
+        "x1": "DOUBLE",
+        "z1": "DOUBLE",
     },
     "event": {
         "s": "VARCHAR",
@@ -138,9 +156,14 @@ BY_TRAIN = ("TrainAhead", "CrossingTrain", "OncomingTrain")
 OTHER = ("RoutePending", "Unknown", "Deadlock")
 
 
+def sql_text(value: str) -> str:
+    """Returns the value as an SQL string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
 def sql_list(values: Sequence[str]) -> str:
     """Returns the values as an SQL list literal, e.g. ('a', 'b')."""
-    return "(" + ", ".join("'" + value.replace("'", "''") + "'" for value in values) + ")"
+    return "(" + ", ".join(sql_text(value) for value in values) + ")"
 
 
 def load(root: Path) -> duckdb.DuckDBPyConnection:
@@ -164,29 +187,48 @@ def load(root: Path) -> duckdb.DuckDBPyConnection:
     return con
 
 
-def prepare(con: duckdb.DuckDBPyConnection, skip_minutes: float) -> None:
-    """Adds view iv: intervals with game minutes and neighbours, without the first skip_minutes of each session.
+def prepare(
+    con: duckdb.DuckDBPyConnection, skip_minutes: float, hours: float | None = None, city: str | None = None
+) -> None:
+    """Adds the views iv (intervals) and ev (events) the figures are taken from.
 
-    Leaving out the start of a session keeps jams from before the load, or
-    from before the dispatcher was switched on, out of the figures.
+    Each session contributes the stretch from skip_minutes game minutes
+    after its start until hours game hours later, or to its end if hours is
+    None; an interval reaching past that end counts up to it. With city,
+    only sessions in that city. iv adds to each interval its session's
+    build, its length in game minutes (gmin), the states before and after
+    it (prev, next), whether the one before was with the dispatcher on
+    (prev_active), and whether the train moves or stands.
+
+    Leaving out the start keeps jams from before the load, or from before
+    the dispatcher was switched on, out of the figures. The same number of
+    hours for every session makes sessions of different length comparable.
     """
-    skip_frames = int(skip_minutes * FRAMES_PER_GAME_MINUTE)
+    begin = f"ss.frame + {int(skip_minutes * FRAMES_PER_GAME_MINUTE)}"
+    end = f"({begin} + {int(hours * 60 * FRAMES_PER_GAME_MINUTE)})" if hours is not None else None
+    city_filter = f" AND ss.city = {sql_text(city)}" if city is not None else ""
+    until = f"least(i.until, {end})" if end is not None else "i.until"
+    before_end = f" AND i.f < {end}" if end is not None else ""
+    standing = f"i.state NOT IN {sql_list(MOVING)} AND i.state NOT IN {sql_list(BOARDING)}"
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW iv AS
-        SELECT i.*,
-               (i.until - i.f) / {FRAMES_PER_GAME_MINUTE} AS gmin,
+        SELECT i.*, ss.build,
+               ({until} - i.f) / {FRAMES_PER_GAME_MINUTE} AS gmin,
                lag(i.state) OVER w AS prev,
                lead(i.state) OVER w AS next,
+               lag(i.active) OVER w AS prev_active,
+               coalesce(lag({standing}) OVER w, false) AS prev_standing,
                i.state IN {sql_list(MOVING)} AS moving,
-               i.state NOT IN {sql_list(MOVING)} AND i.state NOT IN {sql_list(BOARDING)} AS standing
+               {standing} AS standing
         FROM interval i JOIN session ss ON ss.s = i.s
-        WHERE i.f >= ss.frame + {skip_frames}
+        WHERE i.f >= {begin}{before_end}{city_filter}
         WINDOW w AS (PARTITION BY i.s, i.train, i.v ORDER BY i.f)
     """)
+    event_end = f" AND e.f < {end}" if end is not None else ""
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW ev AS
-        SELECT e.* FROM event e JOIN session ss ON ss.s = e.s
-        WHERE e.f >= ss.frame + {skip_frames}
+        SELECT e.*, ss.build FROM event e JOIN session ss ON ss.s = e.s
+        WHERE e.f >= {begin}{event_end}{city_filter}
     """)
 
 
@@ -204,6 +246,7 @@ def sessions(con: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
 # The figures, in the order they are shown: key, label, and whether lower is
 # better (True), higher is better (False), or neither (None).
 FIGURES: list[tuple[str, str, bool | None]] = [
+    ("sessions", "Sitzungen", None),
     ("train_hours", "Zug-Spielstunden", None),
     ("moving_pct", "fährt, % der Zeit", False),
     ("slowed_pct", "davon gedrosselt, %", None),
@@ -214,32 +257,61 @@ FIGURES: list[tuple[str, str, bool | None]] = [
     ("other_pct", "sonst (Route, unbekannt, Deadlock), %", True),
     ("standing_min_h", "Stehen ohne Fahrgastwechsel, min je Zugstunde", True),
     ("stops_h", "Halte außerhalb Fahrgastwechsel je Zugstunde", True),
+    ("long30_pct", "Stehzeit in Halten ab 30 min, %", True),
+    ("long60_pct", "Stehzeit in Halten ab 60 min, %", True),
+    ("longest_min", "längster Halt, min", True),
     ("junction_min_h", "Stehen auf Weichen/Kreuzungen, min je Zugstunde", True),
     ("platform_blocked_min_h", "Stehen am Bahnsteig ohne Fahrgastwechsel, min je Zugstunde", True),
     ("mismatch_min_h", "Modellfehler (Lotse lässt fahren, Zug steht hinter Zug), min je Zugstunde", True),
     ("platform_stops_h", "Bahnsteighalte je Zugstunde", False),
     ("km_h", "km je Zugstunde", False),
-    ("slowed_n", "Drosselungen", None),
+    ("slowed_h", "Drosselungen je Zugstunde", None),
     ("slowed_stopped_pct", "davon doch angehalten, %", True),
-    ("removed_bad", "vom Spiel gelöschte Züge", True),
-    ("removed_normal", "planmäßig entfernte Züge", None),
-    ("circles", "Wartekreise", True),
-    ("releases", "Freigaben nach Zeitlimit", True),
-    ("cuts", "gekürzte Erlaubnisse", True),
+    ("removed_bad_100", "vom Spiel gelöschte Züge je 100 Zugstunden", True),
+    ("removed_normal_100", "planmäßig entfernte Züge je 100 Zugstunden", None),
+    ("circles_100", "Wartekreise je 100 Zugstunden", True),
+    ("releases_100", "Freigaben nach Zeitlimit je 100 Zugstunden", True),
+    ("cuts_100", "gekürzte Erlaubnisse je 100 Zugstunden", True),
 ]
 
+# How figures can be grouped: by session, or all sessions of one build.
+GROUPINGS = {"session": "s", "build": "build"}
 
-def figures(con: duckdb.DuckDBPyConnection, session_ids: Sequence[str]) -> list[dict[str, Any]]:
-    """The figures of each session, split by whether the dispatcher was switched on.
 
-    Returns one dict per session and dispatcher mode, with "session" and
-    "active" and one entry per key in FIGURES. Rates are per train hour of
-    game time; a mode without any train time is left out.
+def figures(con: duckdb.DuckDBPyConnection, keys: Sequence[str], by: str = "session") -> list[dict[str, Any]]:
+    """The figures of each group, split by whether the dispatcher was switched on.
+
+    by is "session", and keys are session names, or "build", and keys are
+    builds: all sessions of a build then count as one run. Returns one dict
+    per group and dispatcher mode, with "group" and "active" and one entry
+    per key in FIGURES. Rates are per train hour of game time; a mode
+    without any train time is left out.
+
+    A stand is a train's standing without a break, whatever it waits for in
+    turn; the long-stand shares and the longest stand are of those.
     """
-    ids = sql_list(session_ids)
-    return rows(con, f"""
-        WITH t AS (
-            SELECT s, active,
+    column = GROUPINGS[by]
+    ids = sql_list(keys)
+    result = rows(con, f"""
+        WITH base AS (
+            SELECT *, {column} AS grp FROM iv WHERE {column} IN {ids}
+        ), islands AS (
+            SELECT grp, active, s, train, v, gmin, standing,
+                   sum(CASE WHEN standing AND prev_standing AND prev_active = active THEN 0 ELSE 1 END)
+                       OVER (PARTITION BY s, train, v ORDER BY f) AS island
+            FROM base
+        ), stands AS (
+            SELECT grp, active, sum(gmin) AS gmin FROM islands WHERE standing
+            GROUP BY grp, active, s, train, v, island
+        ), longs AS (
+            SELECT grp, active, sum(gmin) AS total,
+                   sum(gmin) FILTER (WHERE gmin >= 30) AS ge30,
+                   sum(gmin) FILTER (WHERE gmin >= 60) AS ge60,
+                   max(gmin) AS longest
+            FROM stands GROUP BY grp, active
+        ), t AS (
+            SELECT grp, active,
+                   count(DISTINCT s) AS sessions,
                    sum(gmin) AS minutes,
                    sum(gmin) FILTER (WHERE moving) AS moving,
                    sum(gmin) FILTER (WHERE state = 'Slowed') AS slowed,
@@ -260,17 +332,17 @@ def figures(con: duckdb.DuckDBPyConnection, session_ids: Sequence[str]) -> list[
                    count(*) FILTER (WHERE state = 'Slowed' AND next IS NOT NULL
                                     AND next NOT IN {sql_list(MOVING)}
                                     AND next NOT IN {sql_list(BOARDING)}) AS slowed_stopped
-            FROM iv WHERE s IN {ids} GROUP BY s, active
+            FROM base GROUP BY grp, active
         ), e AS (
-            SELECT s, active,
+            SELECT {column} AS grp, active,
                    count(*) FILTER (WHERE type = 'removed' AND NOT normal) AS removed_bad,
                    count(*) FILTER (WHERE type = 'removed' AND normal) AS removed_normal,
                    count(*) FILTER (WHERE type = 'circle') AS circles,
                    count(*) FILTER (WHERE type = 'release') AS releases,
                    count(*) FILTER (WHERE type = 'cut') AS cuts
-            FROM ev WHERE s IN {ids} GROUP BY s, active
+            FROM ev WHERE {column} IN {ids} GROUP BY {column}, active
         )
-        SELECT t.s AS session, t.active,
+        SELECT t.grp AS "group", t.active, t.sessions,
                t.minutes / 60 AS train_hours,
                100 * coalesce(t.moving, 0) / t.minutes AS moving_pct,
                100 * coalesce(t.slowed, 0) / t.minutes AS slowed_pct,
@@ -281,22 +353,29 @@ def figures(con: duckdb.DuckDBPyConnection, session_ids: Sequence[str]) -> list[
                100 * coalesce(t.other, 0) / t.minutes AS other_pct,
                coalesce(t.standing, 0) / (t.minutes / 60) AS standing_min_h,
                t.stops / (t.minutes / 60) AS stops_h,
+               CASE WHEN l.total > 0 THEN 100 * coalesce(l.ge30, 0) / l.total ELSE 0 END AS long30_pct,
+               CASE WHEN l.total > 0 THEN 100 * coalesce(l.ge60, 0) / l.total ELSE 0 END AS long60_pct,
+               coalesce(l.longest, 0) AS longest_min,
                coalesce(t.junction, 0) / (t.minutes / 60) AS junction_min_h,
                coalesce(t.platform_blocked, 0) / (t.minutes / 60) AS platform_blocked_min_h,
                coalesce(t.mismatch, 0) / (t.minutes / 60) AS mismatch_min_h,
                t.platform_stops / (t.minutes / 60) AS platform_stops_h,
                coalesce(t.metres, 0) / 1000 / (t.minutes / 60) AS km_h,
-               t.slowed_n,
+               t.slowed_n / (t.minutes / 60) AS slowed_h,
                CASE WHEN t.slowed_n > 0 THEN 100 * t.slowed_stopped / t.slowed_n END AS slowed_stopped_pct,
-               coalesce(e.removed_bad, 0) AS removed_bad,
-               coalesce(e.removed_normal, 0) AS removed_normal,
-               coalesce(e.circles, 0) AS circles,
-               coalesce(e.releases, 0) AS releases,
-               coalesce(e.cuts, 0) AS cuts
-        FROM t LEFT JOIN e ON e.s = t.s AND e.active IS NOT DISTINCT FROM t.active
+               coalesce(e.removed_bad, 0) / (t.minutes / 6000) AS removed_bad_100,
+               coalesce(e.removed_normal, 0) / (t.minutes / 6000) AS removed_normal_100,
+               coalesce(e.circles, 0) / (t.minutes / 6000) AS circles_100,
+               coalesce(e.releases, 0) / (t.minutes / 6000) AS releases_100,
+               coalesce(e.cuts, 0) / (t.minutes / 6000) AS cuts_100
+        FROM t
+        LEFT JOIN longs l ON l.grp = t.grp AND l.active IS NOT DISTINCT FROM t.active
+        LEFT JOIN e ON e.grp = t.grp AND e.active IS NOT DISTINCT FROM t.active
         WHERE t.minutes > 0
-        ORDER BY t.s, t.active
     """)
+    order = {key: index for index, key in enumerate(keys)}
+    result.sort(key=lambda row: (order[row["group"]], row["active"]))
+    return result
 
 
 def hotspots(
@@ -319,6 +398,28 @@ def hotspots(
         FROM iv WHERE s = ? AND {condition}
         GROUP BY ALL ORDER BY minutes DESC LIMIT {limit}
     """, [session_id])
+
+
+def bottlenecks(con: duckdb.DuckDBPyConnection, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Where the dispatcher found track not free for the trains it held.
+
+    Held time is put down to the junction area, or else the section, of the
+    lane the dispatcher refused, as the latest network read of the session
+    places it. Sessions from before blockedLane was recorded have none.
+    """
+    return rows(con, f"""
+        WITH lanes AS (
+            SELECT * FROM lane WHERE s = ?
+            QUALIFY row_number() OVER (PARTITION BY lane ORDER BY version DESC) = 1
+        )
+        SELECT CASE WHEN l.area >= 0 THEN 'Weichenbereich ' || l.area ELSE 'Abschnitt ' || l.section END AS place,
+               round(avg((l.x0 + l.x1) / 2)) AS x, round(avg((l.z0 + l.z1) / 2)) AS z,
+               sum(i.gmin) AS minutes, count(*) AS holds, count(DISTINCT (i.train, i.v)) AS trains,
+               mode(i.hold) AS hold, bool_or(l.station <> 0) AS platform
+        FROM iv i JOIN lanes l ON l.lane = i.blockedLane
+        WHERE i.s = ? AND i.state = 'AtSignal' AND i.blockedLane <> 0
+        GROUP BY 1 ORDER BY minutes DESC LIMIT {limit}
+    """, [session_id, session_id])
 
 
 def longest(con: duckdb.DuckDBPyConnection, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -382,9 +483,24 @@ def text_table(headers: Sequence[str], body: Sequence[Sequence[Any]]) -> str:
     return "\n".join(lines)
 
 
-def render(con: duckdb.DuckDBPyConnection, count: int, focus: str | None, skip_minutes: float) -> str:
-    """The report as text: sessions, figures of the last count sessions, and places of the focus session."""
-    all_sessions = sessions(con)
+def render(
+    con: duckdb.DuckDBPyConnection,
+    count: int,
+    focus: str | None,
+    skip_minutes: float,
+    hours: float | None = None,
+    city: str | None = None,
+    by_build: bool = False,
+) -> str:
+    """The report as text: sessions, figures, and places of the focus session.
+
+    The figures are of the last count sessions, or with by_build of every
+    build, all its sessions together, in the order builds first appear.
+    Places are of focus, or of the latest session. skip_minutes, hours and
+    city must be those prepare was called with; here they only go into the
+    headings.
+    """
+    all_sessions = [s for s in sessions(con) if city is None or s["city"] == city]
     if not all_sessions:
         return "Keine Sitzungen gefunden."
     out: list[str] = []
@@ -397,11 +513,21 @@ def render(con: duckdb.DuckDBPyConnection, count: int, focus: str | None, skip_m
     chosen = [s["session"] for s in all_sessions][-count:]
     if focus is not None and focus not in chosen:
         chosen.append(focus)
-    columns = figures(con, chosen)
+    if by_build:
+        builds = list(dict.fromkeys(s["build"] for s in all_sessions))
+        columns = figures(con, builds, by="build")
+    else:
+        columns = figures(con, chosen)
     out.append("")
-    skipped = f", ohne die ersten {skip_minutes:g} Spielminuten jeder Sitzung" if skip_minutes > 0 else ""
-    out.append(f"Kennzahlen je Sitzung und Lotse an/aus{skipped}")
-    headers = ["", "besser"] + [f"{c['session']} {'an' if c['active'] else 'aus'}" for c in columns]
+    scope = "je Build (alle Sitzungen zusammen)" if by_build else "je Sitzung"
+    window = []
+    if skip_minutes > 0:
+        window.append(f"ohne die ersten {skip_minutes:g} Spielminuten")
+    if hours is not None:
+        window.append(f"die ersten {hours:g} Spielstunden")
+    in_window = f", {' und '.join(window)} jeder Sitzung" if window else ""
+    out.append(f"Kennzahlen {scope} und Lotse an/aus{in_window}")
+    headers = ["", "besser"] + [f"{c['group']} {'an' if c['active'] else 'aus'}" for c in columns]
     direction = {True: "kleiner", False: "größer", None: ""}
     body = [[label, direction[lower]] + [c[key] for c in columns] for key, label, lower in FIGURES]
     out.append(text_table(headers, body))
@@ -410,6 +536,13 @@ def render(con: duckdb.DuckDBPyConnection, count: int, focus: str | None, skip_m
     out.append("")
     out.append(f"Wo Züge ohne Fahrgastwechsel standen, Sitzung {target} (100-m-Felder)")
     out.append(place_table(hotspots(con, target, mismatch_only=False)))
+    out.append("")
+    out.append("Engpässe: wo der Lotse Gleis nicht frei fand, für die Züge, die er hielt")
+    narrow = bottlenecks(con, target)
+    out.append(text_table(
+        ["Ort", "x", "z", "Minuten", "Halte", "Züge", "häufigster Grund", "Bahnsteig"],
+        [[b["place"], b["x"], b["z"], b["minutes"], b["holds"], b["trains"], b["hold"], b["platform"]] for b in narrow],
+    ) if narrow else "(keine Angaben in dieser Sitzung)")
     out.append("")
     out.append("Wo Züge hinter Zügen standen, obwohl der Lotse sie fahren ließ (Modellfehler)")
     out.append(place_table(hotspots(con, target, mismatch_only=True)))
@@ -441,12 +574,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--session", help="the session to list places for (default: the latest)")
     parser.add_argument("--skip-minutes", type=float, default=0.0,
                         help="game minutes at the start of each session to leave out, e.g. while an old jam clears")
+    parser.add_argument("--hours", type=float,
+                        help="only this many game hours of each session, so that sessions compare alike")
+    parser.add_argument("--city", help="only sessions in this city")
+    parser.add_argument("--by-build", action="store_true",
+                        help="figures per build, all its sessions together, instead of per session")
     parser.add_argument("--sqlite", type=Path, help="also write all records into this SQLite file")
     args = parser.parse_args(argv)
 
     con = load(args.metrics)
-    prepare(con, args.skip_minutes)
-    print(render(con, args.sessions, args.session, args.skip_minutes))
+    prepare(con, args.skip_minutes, args.hours, args.city)
+    print(render(con, args.sessions, args.session, args.skip_minutes, args.hours, args.city, args.by_build))
     if args.sqlite is not None:
         export_sqlite(con, args.sqlite)
         print(f"\nSQLite: {args.sqlite}")

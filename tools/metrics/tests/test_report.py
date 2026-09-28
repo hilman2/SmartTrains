@@ -31,9 +31,16 @@ def interval(train: int, state: str, start: float, minutes: float, **extra: Any)
     }
 
 
-def session(root: Path, name: str, intervals: list[dict[str, Any]], events: list[dict[str, Any]] | None = None) -> Path:
+def session(
+    root: Path,
+    name: str,
+    intervals: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+    build: str = "abc1234",
+    city: str = "Test",
+) -> Path:
     folder = root / name
-    write(folder, "session", [{"started": "2026-09-28 10:00:00", "city": "Test", "build": "abc1234",
+    write(folder, "session", [{"started": "2026-09-28 10:00:00", "city": city, "build": build,
                                "frame": 0, "active": True}])
     write(folder, "interval", intervals)
     if events:
@@ -41,9 +48,9 @@ def session(root: Path, name: str, intervals: list[dict[str, Any]], events: list
     return folder
 
 
-def figures_of(root: Path, skip_minutes: float = 0.0) -> list[dict[str, Any]]:
+def figures_of(root: Path, skip_minutes: float = 0.0, hours: float | None = None) -> list[dict[str, Any]]:
     con = report.load(root)
-    report.prepare(con, skip_minutes)
+    report.prepare(con, skip_minutes, hours)
     return report.figures(con, [s["session"] for s in report.sessions(con)])
 
 
@@ -105,7 +112,9 @@ def test_modes_are_reported_apart(tmp_path: Path) -> None:
     assert (off["active"], on["active"]) == (False, True)
     assert off["standing_min_h"] == pytest.approx(30, abs=0.1)
     assert on["standing_min_h"] == 0
-    assert (off["circles"], on["circles"]) == (0, 1)
+    # One circle in the one train hour with the dispatcher on.
+    assert off["circles_100"] == 0
+    assert on["circles_100"] == pytest.approx(100, abs=0.5)
 
 
 def test_the_start_of_a_session_can_be_left_out(tmp_path: Path) -> None:
@@ -118,6 +127,83 @@ def test_the_start_of_a_session_can_be_left_out(tmp_path: Path) -> None:
     assert row["standing_min_h"] == 0
 
 
+def test_only_the_first_hours_of_a_session_count(tmp_path: Path) -> None:
+    # Two hours of running, then a stand; the first hour holds only running,
+    # and the interval reaching past the hour counts up to it.
+    session(tmp_path, "a", [
+        interval(1, "Running", 0, 120),
+        interval(1, "TrainAhead", 120, 60),
+    ])
+    (row,) = figures_of(tmp_path, hours=1)
+    assert row["train_hours"] == pytest.approx(1.0, abs=0.01)
+    assert row["standing_min_h"] == 0
+
+
+def test_a_stand_lasts_across_what_the_train_waits_for(tmp_path: Path) -> None:
+    # 40 minutes held, then 30 behind a train: one stand of 70 minutes. A
+    # later stand of 5 minutes is short.
+    session(tmp_path, "a", [
+        interval(1, "Running", 0, 10),
+        interval(1, "AtSignal", 10, 40, hold="TrackHeld"),
+        interval(1, "TrainAhead", 50, 30),
+        interval(1, "Running", 80, 10),
+        interval(1, "AtSignal", 90, 5, hold="TrackHeld"),
+        interval(1, "Running", 95, 5),
+    ])
+    (row,) = figures_of(tmp_path)
+    assert row["longest_min"] == pytest.approx(70, abs=0.1)
+    assert row["long60_pct"] == pytest.approx(100 * 70 / 75, abs=0.1)
+    assert row["long30_pct"] == pytest.approx(100 * 70 / 75, abs=0.1)
+
+
+def test_the_sessions_of_one_build_count_as_one_run(tmp_path: Path) -> None:
+    session(tmp_path, "a", [interval(1, "Running", 0, 60)], build="old")
+    session(tmp_path, "b", [interval(1, "Running", 0, 30), interval(1, "TrainAhead", 30, 30)], build="new")
+    session(tmp_path, "c", [interval(1, "Running", 0, 60)], build="new")
+    con = report.load(tmp_path)
+    report.prepare(con, 0)
+    old, new = report.figures(con, ["old", "new"], by="build")
+    assert (old["group"], new["group"]) == ("old", "new")
+    assert new["sessions"] == 2
+    assert new["train_hours"] == pytest.approx(2.0, abs=0.01)
+    assert new["standing_min_h"] == pytest.approx(15, abs=0.1)
+
+
+def test_held_time_goes_to_the_junction_area_of_the_refused_lane(tmp_path: Path) -> None:
+    # Two trains held for lanes 7 and 8, both in junction area 3; one for
+    # lane 9, in section 5. The network was read twice; the later read
+    # counts.
+    folder = session(tmp_path, "a", [
+        interval(1, "AtSignal", 0, 20, hold="TrackHeld", blockedLane=7),
+        interval(2, "AtSignal", 0, 10, hold="TrackHeld", blockedLane=8),
+        interval(3, "AtSignal", 0, 5, hold="NoRoomAhead", blockedLane=9),
+    ])
+    lane = {"kind": "Switch", "twoWay": False, "length": 20.0, "station": 0, "section": -1, "group": -1,
+            "x0": 100.0, "z0": 200.0, "x1": 120.0, "z1": 200.0}
+    write(folder, "lane", [
+        {**lane, "version": 1, "lane": 7, "area": 99},
+        {**lane, "version": 2, "lane": 7, "area": 3},
+        {**lane, "version": 2, "lane": 8, "area": 3},
+        {**lane, "version": 2, "lane": 9, "kind": "Plain", "area": -1, "section": 5},
+    ])
+    con = report.load(tmp_path)
+    report.prepare(con, 0)
+    first, second = report.bottlenecks(con, "a")
+    assert (first["place"], second["place"]) == ("Weichenbereich 3", "Abschnitt 5")
+    assert first["minutes"] == pytest.approx(30, abs=0.1)
+    assert first["trains"] == 2
+    assert (first["x"], first["z"]) == (110, 200)
+
+
+def test_other_cities_are_left_out(tmp_path: Path) -> None:
+    session(tmp_path, "a", [interval(1, "Running", 0, 60)], city="Here")
+    session(tmp_path, "b", [interval(1, "Running", 0, 60)], city="There")
+    con = report.load(tmp_path)
+    report.prepare(con, 0, city="Here")
+    rows = report.figures(con, ["a", "b"])
+    assert [row["group"] for row in rows] == ["a"]
+
+
 def test_slowing_down_counts_as_failed_when_the_train_stops_after_all(tmp_path: Path) -> None:
     session(tmp_path, "a", [
         interval(1, "Slowed", 0, 5, advice=10.0),
@@ -127,7 +213,8 @@ def test_slowing_down_counts_as_failed_when_the_train_stops_after_all(tmp_path: 
         interval(1, "Running", 20, 5),
     ])
     (row,) = figures_of(tmp_path)
-    assert row["slowed_n"] == 2
+    # Two slowdowns in 25 minutes.
+    assert row["slowed_h"] == pytest.approx(2 / (25 / 60), abs=0.1)
     assert row["slowed_stopped_pct"] == pytest.approx(50)
 
 

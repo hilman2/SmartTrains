@@ -23,9 +23,18 @@ The first run builds the image `smarttrains-metrics`. Options go after
 | Option | Effect |
 |---|---|
 | `--sessions N` | Compares the latest N sessions. Default 3. |
-| `--session NAME` | Lists places for this session instead of the latest. |
+| `--by-build` | Compares builds instead of sessions: all sessions of a build count as one run. Single runs vary a lot; a build needs several to be judged. |
+| `--city NAME` | Only sessions in this city. |
+| `--hours H` | Only the first H game hours of each session, so that sessions of different length compare alike. |
 | `--skip-minutes M` | Leaves out the first M game minutes of each session, e.g. while a jam from before the load clears. |
+| `--session NAME` | Lists places for this session instead of the latest. |
 | `--sqlite FILE` | Also writes all records into a SQLite file in `tools/metrics/out`. |
+
+For example, every build in one city over the first five game hours:
+
+```bash
+docker compose -f tools/metrics/compose.yml run --rm report --by-build --city "St. Derwingen" --hours 5
+```
 
 `METRICS_DIR` points the report at another Metrics folder.
 
@@ -59,6 +68,7 @@ A train that is neither moving nor boarding *stands*. The figures:
 |---|---|
 | standing, min per train hour | all time standing |
 | stops per train hour | changes from moving to standing |
+| standing in stands of 30 or 60 min and more, %; longest stand | a stand is a train's standing without a break, whatever it waits for in turn |
 | on turnouts and crossings | standing time with a car on a turnout or crossing lane |
 | at a platform without boarding | standing time with the front on a platform lane |
 | model error | standing behind a train the dispatcher did not know to be there (`TrainAhead`, `CrossingTrain`, `OncomingTrain`) while it is switched on and has not let the train go: it granted the track, but the game stops the train. Closing up on the known train ahead (`Queued`) does not count. |
@@ -66,6 +76,11 @@ A train that is neither moving nor boarding *stands*. The figures:
 | km per train hour | the odometer |
 | slowed, and stopped after all | `Slowed` intervals followed by standing |
 | removed by the game | `removed` events that are not a train's normal end |
+
+Events are given per 100 train hours. Below the figures, the report lists
+for one session where trains stood longest, the bottlenecks (the junction
+areas and sections whose track the dispatcher found taken, by the time it
+held trains for them), the places of model errors, and the longest stands.
 
 ## Records
 
@@ -123,6 +138,8 @@ the dispatcher is switched on changes.
 | `junction` | A car stands on a turnout or crossing lane. Only for standing trains. |
 | `station` | Station of the lane under the front, 0 off platforms. |
 | `advice` | For `Slowed`: the speed the dispatcher slowed the train to, metres per second. |
+| `holdLane` | While the dispatcher holds the train: the lane it may not enter; 0 otherwise. |
+| `blockedLane` | While the dispatcher holds the train: the lane it found not free; 0 otherwise. |
 
 Fields at the start of an interval (`by`, position, `junction` and so on) are
 as they were when it began.
@@ -151,6 +168,22 @@ Every 1800 frames, half a minute of train movement.
 | `active` | Dispatcher switched on. |
 | `rounds`, `roundMs`, `roundMaxMs` | Dispatcher rounds since the last snapshot, their mean and longest time in milliseconds. |
 | one field per state | Trains in that state. |
+
+### lane.jsonl
+
+Every track lane, each time the network is read.
+
+| Field | |
+|---|---|
+| `version` | The network read, as in the `network` event. |
+| `lane` | Entity index. |
+| `kind` | `Plain`, `Switch` or `Crossing` (diamond or level crossing). |
+| `twoWay` | Trains may run it both ways. |
+| `length` | Metres. |
+| `station` | Station of a platform lane, 0 otherwise. |
+| `section`, `area` | The section, or for a switch or crossing lane the junction area, the dispatcher puts it in; -1 for the other. Numbers hold for this read only. |
+| `group` | The parallel group of its section (passing loop, station tracks, double track), -1 if none. |
+| `x0`, `z0`, `x1`, `z1` | Start and end, metres. |
 
 ### name.jsonl
 

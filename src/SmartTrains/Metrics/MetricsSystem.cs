@@ -102,6 +102,15 @@ namespace SmartTrains.Metrics
 
             /// <summary>The dispatcher's speed advice in metres per second, for a slowed train.</summary>
             public float Advice;
+
+            /// <summary>
+            /// While the dispatcher holds the train: entity index of the lane
+            /// it may not enter, and of the lane it found not free, which is
+            /// where the bottleneck is; 0 otherwise.
+            /// </summary>
+            public int HoldLane;
+
+            public int BlockedLane;
         }
 
         public override int GetUpdateInterval(SystemUpdatePhase phase)
@@ -287,6 +296,11 @@ namespace SmartTrains.Metrics
                 details.State = "Queued";
             if (!row.Moving && state != null && state.Holding)
                 details.Hold = state.Order.Reason.ToString();
+            if (state != null && state.Holding)
+            {
+                details.HoldLane = state.HoldLane.Index;
+                details.BlockedLane = state.BlockedLane.Index;
+            }
             if (details.State == "Slowed")
                 details.Advice = state.Order.SpeedAdvice;
             Entity head = TrainReader.HeadOf(em, train);
@@ -380,7 +394,9 @@ namespace SmartTrains.Metrics
                 .Add("z", math.round(d.Z))
                 .Add("junction", d.Junction)
                 .Add("station", d.Station)
-                .Add("advice", d.Advice));
+                .Add("advice", d.Advice)
+                .Add("holdLane", d.HoldLane)
+                .Add("blockedLane", d.BlockedLane));
         }
 
         private void WriteSnapshot(uint frame, int trains, Dictionary<string, int> counts, bool active)
@@ -466,9 +482,10 @@ namespace SmartTrains.Metrics
             WriteEvent(frame => AddTrain(Event(frame, "circle", active), released).Add("trains", trains));
         }
 
-        /// <summary>The network was read anew.</summary>
-        internal void NetworkRead(int version, LayoutSummary summary, long milliseconds)
+        /// <summary>The network was read anew: an event with its summary, and every lane with its place in the layout.</summary>
+        internal void NetworkRead(int version, TrackLayout layout, long milliseconds)
         {
+            LayoutSummary summary = layout.Summarize();
             WriteEvent(frame => Event(frame, "network", m_Dispatch.Active)
                 .Add("version", version)
                 .Add("lanes", summary.Lanes)
@@ -480,6 +497,38 @@ namespace SmartTrains.Metrics
                 .Add("stationGroups", summary.StationGroups)
                 .Add("doubleTracks", summary.DoubleTracks)
                 .Add("ms", milliseconds));
+            if (m_Log == null)
+                return;
+            try
+            {
+                TrackNetwork network = layout.Network;
+                for (int i = 0; i < network.Lanes.Count; i++)
+                {
+                    LaneInput lane = network.Lanes[i];
+                    Entity entity = EntityKey.ToEntity(lane.Id);
+                    int section = layout.SectionOf(i);
+                    JsonLine record = m_Log.Record()
+                        .Add("version", version)
+                        .Add("lane", entity.Index)
+                        .Add("kind", lane.Kind.ToString())
+                        .Add("twoWay", lane.TwoWay)
+                        .Add("length", lane.Length)
+                        .Add("station", lane.Station != 0 ? EntityKey.ToEntity(lane.Station).Index : 0)
+                        .Add("section", section)
+                        .Add("area", layout.AreaOf(i))
+                        .Add("group", section >= 0 ? layout.GroupOf(section) : -1);
+                    if (EntityManager.TryGetComponent(entity, out Game.Net.Curve curve))
+                    {
+                        record.Add("x0", math.round(curve.m_Bezier.a.x)).Add("z0", math.round(curve.m_Bezier.a.z))
+                            .Add("x1", math.round(curve.m_Bezier.d.x)).Add("z1", math.round(curve.m_Bezier.d.z));
+                    }
+                    m_Log.Write("lane", record);
+                }
+            }
+            catch (Exception e)
+            {
+                Fail(e);
+            }
         }
 
         /// <summary>The game removed the train; <paramref name="normal"/> if at the end of its trip.</summary>
