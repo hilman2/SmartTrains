@@ -72,7 +72,7 @@ namespace SmartTrains.Metrics
         /// <summary>What an interval records besides its times; taken when it begins.</summary>
         private struct Details
         {
-            /// <summary>"Running", "Slowed", or the name of the WaitReason.</summary>
+            /// <summary>"Running", "Slowed", "Queued", or the name of the WaitReason.</summary>
             public string State;
 
             /// <summary>The HoldReason while the dispatcher holds (or, switched off, would hold) the standing train; null otherwise.</summary>
@@ -279,6 +279,12 @@ namespace SmartTrains.Metrics
                 By = row.Blocker.Index,
                 Version = train.Version,
             };
+            // Stopped behind the train the dispatcher knows to be ahead: the
+            // train has closed up as planned. Any other train in the way is
+            // one the dispatcher did not expect there.
+            bool byTrain = row.Reason == WaitReason.TrainAhead || row.Reason == WaitReason.CrossingTrain || row.Reason == WaitReason.OncomingTrain;
+            if (byTrain && state != null && row.Blocker != Entity.Null && state.Order.Ahead == EntityKey.Of(row.Blocker))
+                details.State = "Queued";
             if (!row.Moving && state != null && state.Holding)
                 details.Hold = state.Order.Reason.ToString();
             if (details.State == "Slowed")
@@ -388,7 +394,7 @@ namespace SmartTrains.Metrics
                 .Add("roundMaxMs", maxMs);
             // Every state, also those no train is in, so that each snapshot
             // has the same fields.
-            record.Add("Running", Count(counts, "Running")).Add("Slowed", Count(counts, "Slowed"));
+            record.Add("Running", Count(counts, "Running")).Add("Slowed", Count(counts, "Slowed")).Add("Queued", Count(counts, "Queued"));
             foreach (WaitReason reason in (WaitReason[])Enum.GetValues(typeof(WaitReason)))
             {
                 if (reason != WaitReason.None)

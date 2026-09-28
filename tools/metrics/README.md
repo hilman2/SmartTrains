@@ -49,6 +49,7 @@ follows:
 | moving | `Running`, `Slowed` |
 | boarding | `Boarding`, `LatePassengers` |
 | held by the dispatcher | `AtSignal` |
+| behind a known train | `Queued` |
 | stopped by the game | `TrainAhead`, `CrossingTrain`, `OncomingTrain`, `Signal`, `Obstacle` |
 | other | `RoutePending`, `Unknown`, `Deadlock` |
 
@@ -60,7 +61,7 @@ A train that is neither moving nor boarding *stands*. The figures:
 | stops per train hour | changes from moving to standing |
 | on turnouts and crossings | standing time with a car on a turnout or crossing lane |
 | at a platform without boarding | standing time with the front on a platform lane |
-| model error | standing behind another train (`TrainAhead`, `CrossingTrain`, `OncomingTrain`) while the dispatcher is switched on and has not let the train go: it granted the track, but the game stops the train |
+| model error | standing behind a train the dispatcher did not know to be there (`TrainAhead`, `CrossingTrain`, `OncomingTrain`) while it is switched on and has not let the train go: it granted the track, but the game stops the train. Closing up on the known train ahead (`Queued`) does not count. |
 | platform stops per train hour | changes into `Boarding` from anything else |
 | km per train hour | the odometer |
 | slowed, and stopped after all | `Slowed` intervals followed by standing |
@@ -168,6 +169,7 @@ Every 1800 frames, half a minute of train movement.
 | `Boarding` | stands at a platform before its departure time. |
 | `LatePassengers` | stands at a platform after its departure time, waiting for passengers or cargo. |
 | `AtSignal` | is held by the dispatcher. |
+| `Queued` | is stopped by the train the dispatcher knows to be ahead of it on its granted track: it has closed up as planned. |
 | `TrainAhead` | is stopped by a train ahead, or by track ahead another train has reserved. |
 | `CrossingTrain` | is stopped by a train crossing its way. |
 | `OncomingTrain` | is stopped by a train coming the other way. |

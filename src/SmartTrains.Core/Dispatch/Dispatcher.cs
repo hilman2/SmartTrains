@@ -117,6 +117,14 @@ namespace SmartTrains.Core.Dispatch
         public bool CutBack;
 
         /// <summary>
+        /// The train the dispatcher knows to be ahead on the track granted to
+        /// this one, which it may close up to; 0 if none. A train stopped
+        /// behind it waits as planned, not because the dispatcher misjudged
+        /// the track.
+        /// </summary>
+        public long Ahead;
+
+        /// <summary>
         /// Metres per second the held train should slow to, so that it
         /// reaches the lane it waits in front of about when that lane frees;
         /// 0 for no advice. The hold stays: if the lane frees later, the
@@ -146,6 +154,14 @@ namespace SmartTrains.Core.Dispatch
     {
         /// <summary>Rank gained per in-game minute of standing.</summary>
         public const float RankPerMinute = 2f;
+
+        /// <summary>
+        /// In-game minutes of standing after which a refused train claims all
+        /// the track it needs; see ClaimPriority. Shorter waits are what a
+        /// busy junction costs, and claiming for them would stop trains that
+        /// could pass.
+        /// </summary>
+        public const float PriorityAfterMinutes = 15f;
 
         /// <summary>Room a waiting train leaves to the junction behind it and to the train ahead, metres.</summary>
         private const float kMargin = 15f;
@@ -217,6 +233,12 @@ namespace SmartTrains.Core.Dispatch
 
             /// <summary>Single-track sections claimed for one direction by a waiting train of higher rank.</summary>
             public readonly Dictionary<int, (long Train, bool Forward)> Claims = new Dictionary<int, (long, bool)>();
+
+            /// <summary>Junction lanes claimed by a train that has waited long; see ClaimPriority.</summary>
+            public readonly Dictionary<int, long> PriorityLanes = new Dictionary<int, long>();
+
+            /// <summary>Sections claimed by a train that has waited long; see ClaimPriority.</summary>
+            public readonly Dictionary<int, long> PrioritySections = new Dictionary<int, long>();
         }
 
         /// <summary>Dispatches one round.</summary>
@@ -298,7 +320,10 @@ namespace SmartTrains.Core.Dispatch
             foreach (TrainInput train in trains)
                 byId[train.Id] = train;
             foreach (TrainInput train in trains)
+            {
                 orders[train.Id].SpeedAdvice = SpeedAdvice(train, routes[train.Id], orders[train.Id], byId, routes);
+                orders[train.Id].Ahead = TrainAhead(train, routes[train.Id], granted[train.Id], holdings).Train;
+            }
 
             m_GrantedEnd.Clear();
             var result = new List<TrainOrder>(trains.Count);
@@ -519,6 +544,11 @@ namespace SmartTrains.Core.Dispatch
             order.WaitingFor = waitingFor;
             order.BlockedAt = blockedAt;
             Claim(train, route, end + 1, last, holdings);
+            // A train behind another waits for that one, not for a stream of
+            // trains; claiming the way ahead would keep out the very train it
+            // waits for.
+            if (train.WaitingMinutes >= PriorityAfterMinutes && TrainAhead(train, route, end, holdings).Train == 0)
+                ClaimPriority(train, route, end + 1, last, holdings);
             return false;
         }
 
@@ -614,6 +644,13 @@ namespace SmartTrains.Core.Dispatch
                         if (HeldByOther(holdings, other, train.Id, out holder))
                             return Refuse(order, HoldReason.TrackHeld, holder, i);
                     }
+                    if (PriorityOver(train, holdings, holdings.PriorityLanes, lane, out long claimant))
+                        return Refuse(order, HoldReason.GivingWay, claimant, i);
+                    foreach (int other in m_Network.Overlaps(lane))
+                    {
+                        if (PriorityOver(train, holdings, holdings.PriorityLanes, other, out claimant))
+                            return Refuse(order, HoldReason.GivingWay, claimant, i);
+                    }
                     continue;
                 }
                 if (!checkedSections.Add(section))
@@ -626,6 +663,8 @@ namespace SmartTrains.Core.Dispatch
                 if (holdings.Claims.TryGetValue(section, out (long Train, bool Forward) claim) && claim.Train != train.Id && claim.Forward != forward
                     && !Occupies(users, train.Id))
                     return Refuse(order, HoldReason.GivingWay, claim.Train, i);
+                if (PriorityOver(train, holdings, holdings.PrioritySections, section, out long sectionClaimant))
+                    return Refuse(order, HoldReason.GivingWay, sectionClaimant, i);
                 if (users == null)
                     continue;
                 float used = 0f;
@@ -817,7 +856,8 @@ namespace SmartTrains.Core.Dispatch
         /// refused train needs, in the other direction. Otherwise a stream of
         /// such trains could keep it waiting for good. Only single track is
         /// claimed: holding a station throat for a train that waits for its
-        /// platform would stop trains that could pass it.
+        /// platform would stop trains that could pass it. After a long wait
+        /// the train claims all it needs; see ClaimPriority.
         /// </summary>
         private void Claim(TrainInput train, List<Move> route, int from, int to, Holdings holdings)
         {
@@ -829,6 +869,61 @@ namespace SmartTrains.Core.Dispatch
                 if (!holdings.Claims.ContainsKey(section))
                     holdings.Claims[section] = (train.Id, SectionForward(section, route[i]));
             }
+        }
+
+        /// <summary>
+        /// Keeps trains of lower rank out of all the track the refused train
+        /// needs: every junction lane and section of <c>route[from..to]</c>.
+        ///
+        /// For a train that has waited long. A train needs its way up to the
+        /// next place to wait all at once, while others with shorter ways can
+        /// take a part of it whenever that part is free: one takes the
+        /// turnout, the next the room at the platform, and the train that
+        /// waits never finds all of it free, however high its rank. With the
+        /// claim, what is in the way now runs out of it, nothing new comes
+        /// in, and the train gets its way. Trains that already hold a grant
+        /// keep it.
+        /// </summary>
+        private void ClaimPriority(TrainInput train, List<Move> route, int from, int to, Holdings holdings)
+        {
+            for (int i = from; i <= to && i < route.Count; i++)
+            {
+                int lane = route[i].Lane;
+                int section = m_Layout.SectionOf(lane);
+                if (section < 0)
+                {
+                    if (!holdings.PriorityLanes.ContainsKey(lane))
+                        holdings.PriorityLanes[lane] = train.Id;
+                }
+                else if (!holdings.PrioritySections.ContainsKey(section))
+                {
+                    holdings.PrioritySections[section] = train.Id;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether another train's priority claim on <paramref name="key"/>, a
+        /// lane or a section as the dictionary holds them, keeps
+        /// <paramref name="train"/> out. It does not keep out a train that is
+        /// already on any of the claimed track: that train is in the way of the
+        /// claimant, and must be let out, whichever way it leaves.
+        /// </summary>
+        private bool PriorityOver(TrainInput train, Holdings holdings, Dictionary<int, long> claims, int key, out long claimant)
+        {
+            if (!claims.TryGetValue(key, out claimant) || claimant == train.Id)
+                return false;
+            foreach (Move move in train.Occupied)
+            {
+                int section = m_Layout.SectionOf(move.Lane);
+                long holder;
+                if (section < 0 ? holdings.PriorityLanes.TryGetValue(move.Lane, out holder) : holdings.PrioritySections.TryGetValue(section, out holder))
+                {
+                    if (holder == claimant)
+                        return false;
+                }
+            }
+            return true;
         }
 
         // ---- Another track of a passing loop ----

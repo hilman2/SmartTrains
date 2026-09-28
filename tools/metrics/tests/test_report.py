@@ -83,6 +83,18 @@ def test_a_train_the_dispatcher_let_go_is_no_mismatch(tmp_path: Path) -> None:
     assert row["mismatch_min_h"] == 0
 
 
+def test_closing_up_on_the_train_ahead_is_standing_but_no_mismatch(tmp_path: Path) -> None:
+    session(tmp_path, "a", [
+        interval(1, "Running", 0, 40),
+        interval(1, "Queued", 40, 20, by=2),
+    ])
+    (row,) = figures_of(tmp_path)
+    assert row["mismatch_min_h"] == 0
+    assert row["game_pct"] == 0
+    assert row["queued_pct"] == pytest.approx(100 * 20 / 60, abs=0.1)
+    assert row["standing_min_h"] == pytest.approx(20, abs=0.1)
+
+
 def test_modes_are_reported_apart(tmp_path: Path) -> None:
     session(tmp_path, "a", [
         interval(1, "Running", 0, 60, active=False),
