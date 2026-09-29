@@ -197,6 +197,7 @@ def prepare(
     hours: float | None = None,
     city: str | None = None,
     settle_minutes: float = 0.0,
+    exclude_lines: Sequence[str] = (),
 ) -> None:
     """Adds the views iv (intervals) and ev (events) the figures are taken from.
 
@@ -206,7 +207,9 @@ def prepare(
     each switch of the dispatcher, the start of recording included. An
     interval reaching into what is left out counts only for the part
     outside it, its distance in proportion. With city, only sessions in
-    that city.
+    that city. Trains on the lines in exclude_lines are left out, with their
+    events, e.g. a line the city itself has broken; a line goes by the name
+    it had when its train was first seen, in the game's language then.
 
     iv adds to each interval its session's build, its length in game
     minutes (gmin), the states before and after it (prev, next), whether
@@ -231,13 +234,20 @@ def prepare(
         return (f"coalesce((SELECT max(t.f) FROM event t WHERE t.s = {alias}.s AND t.type = 'dispatcher' "
                 f"AND t.f <= {alias}.f) + {settle}, 0)")
 
+    def kept(alias: str) -> str:
+        """A condition that alias.train is on none of the excluded lines."""
+        if not exclude_lines:
+            return ""
+        return (f" AND NOT EXISTS (SELECT 1 FROM train x WHERE x.s = {alias}.s AND x.train = {alias}.train "
+                f"AND x.v = {alias}.v AND x.line IN {sql_list(exclude_lines)})")
+
     standing = f"c.state NOT IN {sql_list(MOVING)} AND c.state NOT IN {sql_list(BOARDING)}"
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW iv AS
         WITH c AS (
             SELECT i.*, ss.build, greatest(i.f, {settled("i")}) AS f_from, {until} AS f_to
             FROM interval i JOIN session ss ON ss.s = i.s
-            WHERE i.f >= {begin}{before_end}{city_filter}
+            WHERE i.f >= {begin}{before_end}{city_filter}{kept("i")}
         )
         SELECT c.* EXCLUDE (dist, f_from, f_to),
                CASE WHEN c.until > c.f THEN c.dist * (c.f_to - c.f_from) / (c.until - c.f) ELSE c.dist END AS dist,
@@ -255,7 +265,7 @@ def prepare(
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW ev AS
         SELECT e.*, ss.build FROM event e JOIN session ss ON ss.s = e.s
-        WHERE e.f >= {begin}{event_end}{city_filter} AND e.f >= {settled("e")}
+        WHERE e.f >= {begin}{event_end}{city_filter} AND e.f >= {settled("e")}{kept("e")}
     """)
 
 
@@ -620,13 +630,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--city", help="only sessions in this city")
     parser.add_argument("--settle-minutes", type=float, default=0.0,
                         help="game minutes after each switch of the dispatcher to leave out, while the network settles")
+    parser.add_argument("--exclude-line", action="append", default=[], metavar="NAME",
+                        help="leave out the trains of this line, e.g. one the city has broken; can be given repeatedly")
     parser.add_argument("--by-build", action="store_true",
                         help="figures per build, all its sessions together, instead of per session")
     parser.add_argument("--sqlite", type=Path, help="also write all records into this SQLite file")
     args = parser.parse_args(argv)
 
     con = load(args.metrics)
-    prepare(con, args.skip_minutes, args.hours, args.city, args.settle_minutes)
+    prepare(con, args.skip_minutes, args.hours, args.city, args.settle_minutes, args.exclude_line)
     print(render(con, args.sessions, args.session, args.skip_minutes, args.hours, args.city, args.by_build))
     if args.sqlite is not None:
         export_sqlite(con, args.sqlite)

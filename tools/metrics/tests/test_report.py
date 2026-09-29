@@ -188,6 +188,26 @@ def test_the_time_after_each_switch_can_be_left_out(tmp_path: Path) -> None:
     assert on["circles_100"] == 0
 
 
+def test_a_line_can_be_left_out(tmp_path: Path) -> None:
+    # Train 2 runs on a broken line; it and its removal are left out, under
+    # the line's name in either language the game was played in.
+    folder = session(tmp_path, "a", [
+        interval(1, "Running", 0, 60),
+        interval(2, "TrainAhead", 0, 60),
+        interval(3, "TrainAhead", 0, 60),
+    ], events=[{"f": 10, "type": "removed", "active": True, "normal": False, "cause": "NoRoute",
+                "train": 2, "v": 1, "passengers": 0, "load": 500}])
+    write(folder, "train", [{"f": 0, "train": 1, "v": 1, "kind": "passenger", "line": "Line 1"},
+                            {"f": 0, "train": 2, "v": 1, "kind": "cargo", "line": "Güterzugroute 6"},
+                            {"f": 0, "train": 3, "v": 1, "kind": "cargo", "line": "Cargo railway route 6"}])
+    con = report.load(tmp_path)
+    report.prepare(con, 0, exclude_lines=["Güterzugroute 6", "Cargo railway route 6"])
+    (row,) = report.figures(con, ["a"])
+    assert row["train_hours"] == pytest.approx(1.0, abs=0.01)
+    assert row["standing_min_h"] == 0
+    assert row["removed_bad_100"] == 0
+
+
 def test_a_stand_lasts_across_what_the_train_waits_for(tmp_path: Path) -> None:
     # 40 minutes held, then 30 behind a train: one stand of 70 minutes. A
     # later stand of 5 minutes is short.
