@@ -164,6 +164,30 @@ def test_only_the_first_hours_of_a_session_count(tmp_path: Path) -> None:
     assert row["standing_min_h"] == 0
 
 
+def test_the_time_after_each_switch_can_be_left_out(tmp_path: Path) -> None:
+    # Off from minute 0, on from minute 60; 30 minutes to settle after each
+    # switch. Off counts minutes 30-60, on 90-120. The stand that begins in
+    # the settling time counts from its end; the one wholly in it not at all.
+    session(tmp_path, "a", [
+        interval(1, "TrainAhead", 0, 20, active=False),
+        interval(1, "Running", 20, 40, active=False, dist=4000.0),
+        interval(1, "AtSignal", 60, 50, hold="TrackHeld"),
+        interval(1, "Running", 110, 10),
+    ], events=[{"f": 0, "type": "dispatcher", "active": False},
+               {"f": int(60 * MINUTE), "type": "dispatcher", "active": True},
+               {"f": int(70 * MINUTE), "type": "circle", "active": True, "trains": [1]}])
+    con = report.load(tmp_path)
+    report.prepare(con, 0, settle_minutes=30)
+    off, on = report.figures(con, ["a"])
+    assert off["train_hours"] == pytest.approx(0.5, abs=0.01)
+    assert off["standing_min_h"] == 0
+    # Of the 40 minutes run, the 30 after the settling time: 3 km in half an hour.
+    assert off["km_h"] == pytest.approx(6, abs=0.1)
+    assert on["train_hours"] == pytest.approx(0.5, abs=0.01)
+    assert on["standing_min_h"] == pytest.approx(40, abs=0.2)
+    assert on["circles_100"] == 0
+
+
 def test_a_stand_lasts_across_what_the_train_waits_for(tmp_path: Path) -> None:
     # 40 minutes held, then 30 behind a train: one stand of 70 minutes. A
     # later stand of 5 minutes is short.

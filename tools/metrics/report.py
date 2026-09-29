@@ -192,47 +192,70 @@ def load(root: Path) -> duckdb.DuckDBPyConnection:
 
 
 def prepare(
-    con: duckdb.DuckDBPyConnection, skip_minutes: float, hours: float | None = None, city: str | None = None
+    con: duckdb.DuckDBPyConnection,
+    skip_minutes: float,
+    hours: float | None = None,
+    city: str | None = None,
+    settle_minutes: float = 0.0,
 ) -> None:
     """Adds the views iv (intervals) and ev (events) the figures are taken from.
 
     Each session contributes the stretch from skip_minutes game minutes
     after its start until hours game hours later, or to its end if hours is
-    None; an interval reaching past that end counts up to it. With city,
-    only sessions in that city. iv adds to each interval its session's
-    build, its length in game minutes (gmin), the states before and after
-    it (prev, next), whether the one before was with the dispatcher on
-    (prev_active), and whether the train moves or stands.
+    None. Left out besides are the first settle_minutes game minutes after
+    each switch of the dispatcher, the start of recording included. An
+    interval reaching into what is left out counts only for the part
+    outside it, its distance in proportion. With city, only sessions in
+    that city.
 
-    Leaving out the start keeps jams from before the load, or from before
-    the dispatcher was switched on, out of the figures. The same number of
-    hours for every session makes sessions of different length comparable.
+    iv adds to each interval its session's build, its length in game
+    minutes (gmin), the states before and after it (prev, next), whether
+    the one before was with the dispatcher on (prev_active), and whether
+    the train moves or stands.
+
+    Leaving out the start keeps jams from before the load out of the
+    figures, and leaving out the time after a switch those from before it:
+    the dispatcher first clears what built up without it, and without it,
+    its holds still show for a while. The same number of hours for every
+    session makes sessions of different length comparable.
     """
     begin = f"ss.frame + {int(skip_minutes * FRAMES_PER_GAME_MINUTE)}"
     end = f"({begin} + {int(hours * 60 * FRAMES_PER_GAME_MINUTE)})" if hours is not None else None
     city_filter = f" AND ss.city = {sql_text(city)}" if city is not None else ""
     until = f"least(i.until, {end})" if end is not None else "i.until"
     before_end = f" AND i.f < {end}" if end is not None else ""
-    standing = f"i.state NOT IN {sql_list(MOVING)} AND i.state NOT IN {sql_list(BOARDING)}"
+    settle = int(settle_minutes * FRAMES_PER_GAME_MINUTE)
+
+    def settled(alias: str) -> str:
+        """The frame the settling time around alias.f ends; 0 without a switch before it."""
+        return (f"coalesce((SELECT max(t.f) FROM event t WHERE t.s = {alias}.s AND t.type = 'dispatcher' "
+                f"AND t.f <= {alias}.f) + {settle}, 0)")
+
+    standing = f"c.state NOT IN {sql_list(MOVING)} AND c.state NOT IN {sql_list(BOARDING)}"
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW iv AS
-        SELECT i.*, ss.build,
-               ({until} - i.f) / {FRAMES_PER_GAME_MINUTE} AS gmin,
-               lag(i.state) OVER w AS prev,
-               lead(i.state) OVER w AS next,
-               lag(i.active) OVER w AS prev_active,
+        WITH c AS (
+            SELECT i.*, ss.build, greatest(i.f, {settled("i")}) AS f_from, {until} AS f_to
+            FROM interval i JOIN session ss ON ss.s = i.s
+            WHERE i.f >= {begin}{before_end}{city_filter}
+        )
+        SELECT c.* EXCLUDE (dist, f_from, f_to),
+               CASE WHEN c.until > c.f THEN c.dist * (c.f_to - c.f_from) / (c.until - c.f) ELSE c.dist END AS dist,
+               (c.f_to - c.f_from) / {FRAMES_PER_GAME_MINUTE} AS gmin,
+               lag(c.state) OVER w AS prev,
+               lead(c.state) OVER w AS next,
+               lag(c.active) OVER w AS prev_active,
                coalesce(lag({standing}) OVER w, false) AS prev_standing,
-               i.state IN {sql_list(MOVING)} AS moving,
+               c.state IN {sql_list(MOVING)} AS moving,
                {standing} AS standing
-        FROM interval i JOIN session ss ON ss.s = i.s
-        WHERE i.f >= {begin}{before_end}{city_filter}
-        WINDOW w AS (PARTITION BY i.s, i.train, i.v ORDER BY i.f)
+        FROM c WHERE c.f_to > c.f_from
+        WINDOW w AS (PARTITION BY c.s, c.train, c.v ORDER BY c.f)
     """)
     event_end = f" AND e.f < {end}" if end is not None else ""
     con.execute(f"""
         CREATE OR REPLACE TEMP VIEW ev AS
         SELECT e.*, ss.build FROM event e JOIN session ss ON ss.s = e.s
-        WHERE e.f >= {begin}{event_end}{city_filter}
+        WHERE e.f >= {begin}{event_end}{city_filter} AND e.f >= {settled("e")}
     """)
 
 
@@ -595,13 +618,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--hours", type=float,
                         help="only this many game hours of each session, so that sessions compare alike")
     parser.add_argument("--city", help="only sessions in this city")
+    parser.add_argument("--settle-minutes", type=float, default=0.0,
+                        help="game minutes after each switch of the dispatcher to leave out, while the network settles")
     parser.add_argument("--by-build", action="store_true",
                         help="figures per build, all its sessions together, instead of per session")
     parser.add_argument("--sqlite", type=Path, help="also write all records into this SQLite file")
     args = parser.parse_args(argv)
 
     con = load(args.metrics)
-    prepare(con, args.skip_minutes, args.hours, args.city)
+    prepare(con, args.skip_minutes, args.hours, args.city, args.settle_minutes)
     print(render(con, args.sessions, args.session, args.skip_minutes, args.hours, args.city, args.by_build))
     if args.sqlite is not None:
         export_sqlite(con, args.sqlite)

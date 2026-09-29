@@ -30,6 +30,7 @@ The first run builds the image `smarttrains-metrics`. Options go after
 | `--city NAME` | Only sessions in this city. |
 | `--hours H` | Only the first H game hours of each session, so that sessions of different length compare alike. |
 | `--skip-minutes M` | Leaves out the first M game minutes of each session, e.g. while a jam from before the load clears. |
+| `--settle-minutes M` | Leaves out the first M game minutes after each switch of the dispatcher, and after recording starts: switched on, it first clears the jams from before; switched off, its holds still show for a while. |
 | `--session NAME` | Lists places for this session instead of the latest. |
 | `--sqlite FILE` | Also writes all records into a SQLite file in `tools/metrics/out`. |
 
