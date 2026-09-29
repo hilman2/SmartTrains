@@ -27,7 +27,7 @@ The train button at the top left opens a list of all trains: whether each one ru
 
 **What to expect**
 
-In the city the mod was developed in, the game removed more than 25 deadlocked trains in seven in-game hours without the dispatcher. With it, such removals were about twenty times rarer. In return, trains wait at signals more than without it: there, they covered about a sixth less distance per hour. Making the dispatcher faster without losing that safety is the next step.
+In the city the mod was developed in, the game removed more than 25 deadlocked trains, with their passengers and cargo, in seven in-game hours without the dispatcher. With it, such removals were about twenty times rarer. The dispatcher is careful: now and then a train waits at a signal where the game would have let it run on. Making it faster without losing that safety is ongoing work.
 
 **Good to know**
 

@@ -77,6 +77,8 @@ A train that is neither moving nor boarding *stands*. The figures:
 | model error | standing behind a train the dispatcher did not know to be there (`TrainAhead`, `CrossingTrain`, `OncomingTrain`) while it is switched on and has not let the train go: it granted the track, but the game stops the train. Closing up on the known train ahead (`Queued`) does not count. |
 | platform stops per train hour | changes into `Boarding` from anything else |
 | km per train hour | the odometer |
+| passenger-km, cargo-km per train hour | passengers, or cargo units, on board times distance run: what the trains carry. Runs empty, e.g. a replacement train from the depot, add nothing. Empty for sessions recorded before the load was. |
+| passengers, cargo in removed trains | on board of trains the game removed other than at their normal end: lost |
 | slowed, and stopped after all | `Slowed` intervals followed by standing |
 | removed by the game | `removed` events that are not a train's normal end |
 
@@ -143,6 +145,7 @@ the dispatcher is switched on changes.
 | `advice` | For `Slowed`: the speed the dispatcher slowed the train to, metres per second. |
 | `holdLane` | While the dispatcher holds the train: the lane it may not enter; 0 otherwise. |
 | `blockedLane` | While the dispatcher holds the train: the lane it found not free; 0 otherwise. |
+| `passengers`, `load` | Passengers, and cargo in the game's units, on board over all cars. |
 
 Fields at the start of an interval (`by`, position, `junction` and so on) are
 as they were when it began.
@@ -156,7 +159,7 @@ as they were when it began.
 | `circle` | a circle of trains waiting for each other formed | `trains`; `train`, `v`, `x`, `z` of the train let go |
 | `release` | the dispatcher let a train go after holding it too long | `train`, `v`, `x`, `z`, `hold`, `by`, `lane` (the lane it found taken) |
 | `cut` | the dispatcher cut back a train's grant, because another train now stands in the way | `train`, `v`, `x`, `z`, `hold`, `by`, `lane` (where the train now stops) |
-| `removed` | the game removed a train | `train`, `v`, `x`, `z`, `cause`, `normal` (the train's normal end) |
+| `removed` | the game removed a train | `train`, `v`, `x`, `z`, `cause`, `normal` (the train's normal end), `passengers`, `load` (on board) |
 
 A circle counts once, when it forms, and a long hold once until the
 dispatcher stops holding the train.

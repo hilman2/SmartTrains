@@ -83,6 +83,8 @@ TABLES: dict[str, dict[str, str]] = {
         "advice": "DOUBLE",
         "holdLane": "INTEGER",
         "blockedLane": "INTEGER",
+        "passengers": "INTEGER",
+        "load": "INTEGER",
     },
     "lane": {
         "s": "VARCHAR",
@@ -115,6 +117,8 @@ TABLES: dict[str, dict[str, str]] = {
         "trains": "INTEGER[]",
         "cause": "VARCHAR",
         "normal": "BOOLEAN",
+        "passengers": "INTEGER",
+        "load": "INTEGER",
         "version": "INTEGER",
         "lanes": "INTEGER",
         "sections": "INTEGER",
@@ -265,6 +269,10 @@ FIGURES: list[tuple[str, str, bool | None]] = [
     ("mismatch_min_h", "Modellfehler (Lotse lässt fahren, Zug steht hinter Zug), min je Zugstunde", True),
     ("platform_stops_h", "Bahnsteighalte je Zugstunde", False),
     ("km_h", "km je Zugstunde", False),
+    ("pkm_h", "Personen-km je Zugstunde", False),
+    ("cargo_km_h", "Fracht-km je Zugstunde (Ladeeinheiten mal km)", False),
+    ("lost_passengers_100", "Fahrgäste in gelöschten Zügen je 100 Zugstunden", True),
+    ("lost_load_100", "Fracht in gelöschten Zügen je 100 Zugstunden", True),
     ("slowed_h", "Drosselungen je Zugstunde", None),
     ("slowed_stopped_pct", "davon doch angehalten, %", True),
     ("removed_bad_100", "vom Spiel gelöschte Züge je 100 Zugstunden", True),
@@ -328,6 +336,8 @@ def figures(con: duckdb.DuckDBPyConnection, keys: Sequence[str], by: str = "sess
                    count(*) FILTER (WHERE state = 'Boarding' AND prev IS NOT NULL
                                     AND prev NOT IN {sql_list(BOARDING)}) AS platform_stops,
                    sum(dist) AS metres,
+                   sum(passengers * dist) AS passenger_metres,
+                   sum(load * dist) AS load_metres,
                    count(*) FILTER (WHERE state = 'Slowed') AS slowed_n,
                    count(*) FILTER (WHERE state = 'Slowed' AND next IS NOT NULL
                                     AND next NOT IN {sql_list(MOVING)}
@@ -339,7 +349,9 @@ def figures(con: duckdb.DuckDBPyConnection, keys: Sequence[str], by: str = "sess
                    count(*) FILTER (WHERE type = 'removed' AND normal) AS removed_normal,
                    count(*) FILTER (WHERE type = 'circle') AS circles,
                    count(*) FILTER (WHERE type = 'release') AS releases,
-                   count(*) FILTER (WHERE type = 'cut') AS cuts
+                   count(*) FILTER (WHERE type = 'cut') AS cuts,
+                   sum(passengers) FILTER (WHERE type = 'removed' AND NOT normal) AS lost_passengers,
+                   sum(load) FILTER (WHERE type = 'removed' AND NOT normal) AS lost_load
             FROM ev WHERE {column} IN {ids} GROUP BY {column}, active
         )
         SELECT t.grp AS "group", t.active, t.sessions,
@@ -361,6 +373,12 @@ def figures(con: duckdb.DuckDBPyConnection, keys: Sequence[str], by: str = "sess
                coalesce(t.mismatch, 0) / (t.minutes / 60) AS mismatch_min_h,
                t.platform_stops / (t.minutes / 60) AS platform_stops_h,
                coalesce(t.metres, 0) / 1000 / (t.minutes / 60) AS km_h,
+               t.passenger_metres / 1000 / (t.minutes / 60) AS pkm_h,
+               t.load_metres / 1000 / (t.minutes / 60) AS cargo_km_h,
+               CASE WHEN t.passenger_metres IS NOT NULL
+                    THEN coalesce(e.lost_passengers, 0) / (t.minutes / 6000) END AS lost_passengers_100,
+               CASE WHEN t.load_metres IS NOT NULL
+                    THEN coalesce(e.lost_load, 0) / (t.minutes / 6000) END AS lost_load_100,
                t.slowed_n / (t.minutes / 60) AS slowed_h,
                CASE WHEN t.slowed_n > 0 THEN 100 * t.slowed_stopped / t.slowed_n END AS slowed_stopped_pct,
                coalesce(e.removed_bad, 0) / (t.minutes / 6000) AS removed_bad_100,

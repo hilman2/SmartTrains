@@ -103,6 +103,11 @@ namespace SmartTrains.Metrics
             /// <summary>The dispatcher's speed advice in metres per second, for a slowed train.</summary>
             public float Advice;
 
+            /// <summary>Passengers on board, and cargo in the game's units, over all cars.</summary>
+            public int Passengers;
+
+            public int Load;
+
             /// <summary>
             /// While the dispatcher holds the train: entity index of the lane
             /// it may not enter, and of the lane it found not free, which is
@@ -177,6 +182,7 @@ namespace SmartTrains.Metrics
                         long key = EntityKey.Of(train);
                         if (m_KnownTrains.Add(key))
                             WriteTrain(train, row, frame);
+                        TrainReader.ReadLoad(EntityManager, train, row);
                         Details details = Describe(train, row, state, active, network);
                         counts.TryGetValue(details.State, out int count);
                         counts[details.State] = count + 1;
@@ -298,6 +304,8 @@ namespace SmartTrains.Metrics
                 Released = state != null && state.Released,
                 By = row.Blocker.Index,
                 Version = train.Version,
+                Passengers = row.Passengers,
+                Load = row.Load,
             };
             // Stopped behind the train the dispatcher knows to be ahead: the
             // train has closed up as planned. Any other train in the way is
@@ -407,7 +415,9 @@ namespace SmartTrains.Metrics
                 .Add("station", d.Station)
                 .Add("advice", d.Advice)
                 .Add("holdLane", d.HoldLane)
-                .Add("blockedLane", d.BlockedLane));
+                .Add("blockedLane", d.BlockedLane)
+                .Add("passengers", d.Passengers)
+                .Add("load", d.Load));
         }
 
         private void WriteSnapshot(uint frame, int trains, Dictionary<string, int> counts, bool active)
@@ -542,12 +552,16 @@ namespace SmartTrains.Metrics
             }
         }
 
-        /// <summary>The game removed the train; <paramref name="normal"/> if at the end of its trip.</summary>
+        /// <summary>The game removed the train; <paramref name="normal"/> if at the end of its trip. Passengers and cargo on board are lost with it.</summary>
         internal void Removed(Entity train, DespawnCause cause, bool normal)
         {
+            var load = new TrainRow();
+            TrainReader.ReadLoad(EntityManager, train, load);
             WriteEvent(frame => AddTrain(Event(frame, "removed", m_Dispatch.Active), train)
                 .Add("cause", cause.ToString())
-                .Add("normal", normal));
+                .Add("normal", normal)
+                .Add("passengers", load.Passengers)
+                .Add("load", load.Load));
         }
     }
 }

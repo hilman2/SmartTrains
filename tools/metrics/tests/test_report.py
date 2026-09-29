@@ -80,6 +80,31 @@ def test_figures_add_up_what_trains_did(tmp_path: Path) -> None:
     assert row["km_h"] == pytest.approx(30 / 4, abs=0.1)
 
 
+def test_only_what_is_on_board_counts_as_transported(tmp_path: Path) -> None:
+    # 20 km with 100 passengers, then 10 km empty from the depot: 2000
+    # passenger-km in one train hour. A train removed with 50 passengers on
+    # board loses them.
+    session(tmp_path, "a", [
+        interval(1, "Running", 0, 40, dist=20000.0, passengers=100, load=0),
+        interval(1, "Running", 40, 20, dist=10000.0, passengers=0, load=0),
+    ], events=[{"f": 10, "type": "removed", "active": True, "normal": False, "cause": "Deadlock",
+                "passengers": 50, "load": 0},
+               {"f": 20, "type": "removed", "active": True, "normal": True, "cause": "Arrived",
+                "passengers": 80, "load": 0}])
+    (row,) = figures_of(tmp_path)
+    assert row["km_h"] == pytest.approx(30, abs=0.1)
+    assert row["pkm_h"] == pytest.approx(2000, abs=1)
+    assert row["lost_passengers_100"] == pytest.approx(5000, abs=1)
+
+
+def test_sessions_without_load_show_nothing_rather_than_zero(tmp_path: Path) -> None:
+    # Recorded before passengers were; a zero would read as empty trains.
+    session(tmp_path, "a", [interval(1, "Running", 0, 60, dist=1000.0)])
+    (row,) = figures_of(tmp_path)
+    assert row["pkm_h"] is None
+    assert row["lost_passengers_100"] is None
+
+
 def test_a_train_the_dispatcher_let_go_is_no_mismatch(tmp_path: Path) -> None:
     session(tmp_path, "a", [
         interval(1, "Running", 0, 10),
