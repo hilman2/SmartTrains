@@ -96,15 +96,6 @@ namespace SmartTrains.Dispatch
         /// </summary>
         private const float kMaxHoldMinutes = 240f;
 
-        // Base ranks: passengers first, then freight on a line, then through
-        // traffic, which only crosses the city. Two points are one minute of
-        // waiting (Dispatcher.RankPerMinute).
-        private const float kRankPassenger = 20f;
-        private const float kRankCargo = 12f;
-        private const float kRankThroughPassenger = 10f;
-        private const float kRankThroughCargo = 6f;
-        private const float kRankReturning = 4f;
-
         private NetworkSystem m_Network;
         private SimulationSystem m_Simulation;
         private UI.TrainsUISystem m_TrainsUI;
@@ -579,22 +570,29 @@ namespace SmartTrains.Dispatch
             return departure > frame ? (departure - frame) * kSecondsPerFrame : 0f;
         }
 
+        /// <summary>The train's rank before waiting adds to it; see Core BaseRank.</summary>
         private float BaseRank(Entity train)
         {
             EntityManager em = EntityManager;
+            var load = new TrainRow();
+            TrainReader.ReadLoad(em, train, load);
             if (em.TryGetComponent(train, out Game.Vehicles.PublicTransport passenger))
             {
                 if ((passenger.m_State & PublicTransportFlags.Returning) != 0)
-                    return kRankReturning;
-                return (passenger.m_State & PublicTransportFlags.DummyTraffic) != 0 ? kRankThroughPassenger : kRankPassenger;
+                    return Core.Dispatch.BaseRank.Of(TrainKind.Returning, 0f);
+                if ((passenger.m_State & PublicTransportFlags.DummyTraffic) != 0)
+                    return Core.Dispatch.BaseRank.Of(TrainKind.ThroughPassenger, 0f);
+                return Core.Dispatch.BaseRank.Of(TrainKind.Passenger, (float)load.Passengers / load.PassengerCapacity);
             }
             if (em.TryGetComponent(train, out Game.Vehicles.CargoTransport cargo))
             {
                 if ((cargo.m_State & CargoTransportFlags.Returning) != 0)
-                    return kRankReturning;
-                return (cargo.m_State & CargoTransportFlags.DummyTraffic) != 0 ? kRankThroughCargo : kRankCargo;
+                    return Core.Dispatch.BaseRank.Of(TrainKind.Returning, 0f);
+                if ((cargo.m_State & CargoTransportFlags.DummyTraffic) != 0)
+                    return Core.Dispatch.BaseRank.Of(TrainKind.ThroughCargo, 0f);
+                return Core.Dispatch.BaseRank.Of(TrainKind.Cargo, (float)load.Load / load.LoadCapacity);
             }
-            return kRankReturning;
+            return Core.Dispatch.BaseRank.Of(TrainKind.Returning, 0f);
         }
 
         /// <summary>
