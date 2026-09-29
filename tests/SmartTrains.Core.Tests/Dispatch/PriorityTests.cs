@@ -51,14 +51,27 @@ namespace SmartTrains.Core.Tests.Dispatch
             return m;
         }
 
-        private static List<TrainOrder> Dispatch(Merge m, float waited)
+        private static List<TrainOrder> Dispatch(Merge m, float waited, float otherWaited = 0f)
         {
             TrackNetwork n = m.Network;
             TrainInput waiting = Train(1, 10, n, m.P1, m.J1, m.W);
             waiting.WaitingMinutes = waited;
-            TrainInput other = Train(2, 8, n, m.P2, m.J2, m.W);
-            TrainInput onTurnout = Train(3, 5, n, m.J1, m.W);
+            // Its base rank keeps it below train 1 however long it waits.
+            TrainInput other = Train(2, -100, n, m.P2, m.J2, m.W);
+            other.WaitingMinutes = otherWaited;
+            TrainInput onTurnout = Train(3, -200, n, m.J1, m.W);
             return new Dispatcher(new TrackLayout(n)).Dispatch(new[] { waiting, other, onTurnout });
+        }
+
+        [Fact]
+        public void AClaimDoesNotKeepOutATrainThatHasWaitedLongItself()
+        {
+            // Both trains starve. Claims that keep starving trains out of each
+            // other's way make every long wait longer, and once many trains
+            // wait long, a jam feeds itself. Train 2 takes the free room.
+            List<TrainOrder> orders = Dispatch(Build(), waited: Dispatcher.PriorityAfterMinutes + 20f,
+                otherWaited: Dispatcher.PriorityAfterMinutes + 1f);
+            Assert.Equal(-1, Order(orders, 2).HoldAt);
         }
 
         [Fact]

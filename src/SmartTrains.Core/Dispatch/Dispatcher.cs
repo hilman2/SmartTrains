@@ -988,10 +988,17 @@ namespace SmartTrains.Core.Dispatch
         /// lane or a section as the dictionary holds them, keeps
         /// <paramref name="train"/> out; see Inside for the trains it lets
         /// through.
+        ///
+        /// A train that has waited long itself is not kept out. The claim is
+        /// against the stream of trains that come and go while the claimant
+        /// waits; holding starving trains out of each other's way makes every
+        /// long wait longer, and once many trains wait long, a jam feeds
+        /// itself. Among starving trains, rank decides, as it does anyway.
         /// </summary>
         private bool PriorityOver(TrainInput train, Holdings holdings, Dictionary<int, long> claims, int key, out long claimant)
         {
-            return claims.TryGetValue(key, out claimant) && claimant != train.Id && !Inside(train, claimant, holdings);
+            return claims.TryGetValue(key, out claimant) && claimant != train.Id && train.WaitingMinutes < PriorityAfterMinutes
+                && !Inside(train, claimant, holdings);
         }
 
         /// <summary>Notes the way <c>route[from..to]</c> the train was refused, for Inside.</summary>

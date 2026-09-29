@@ -105,13 +105,6 @@ namespace SmartTrains.Dispatch
         private const float kRankThroughCargo = 6f;
         private const float kRankReturning = 4f;
 
-        /// <summary>
-        /// Metres added to a train's braking distance for the look-ahead: the
-        /// dispatcher must grant track before the game reserves it, and the
-        /// game looks ahead by the braking distance plus a little.
-        /// </summary>
-        private const float kLookAheadMargin = 100f;
-
         private NetworkSystem m_Network;
         private SimulationSystem m_Simulation;
         private UI.TrainsUISystem m_TrainsUI;
@@ -556,7 +549,7 @@ namespace SmartTrains.Dispatch
             };
             input.Route.AddRange(route.Moves);
             input.Occupied.AddRange(route.Occupied);
-            MeasureTrain(train, out input.Length, out input.LookAhead);
+            MeasureTrain(train, input.Speed, out input.Length, out input.LookAhead);
             return input;
         }
 
@@ -605,12 +598,11 @@ namespace SmartTrains.Dispatch
         }
 
         /// <summary>
-        /// The train's length, and how far ahead it needs track granted: its
-        /// braking distance from top speed plus the game's signal distance
-        /// (VehicleUtils). Keeps the train's pace in <see cref="m_Pace"/> for
-        /// <see cref="SlowDown"/>.
+        /// The train's length, and how far ahead it needs track granted at
+        /// the speed it runs (see LookAhead). Keeps the train's pace in
+        /// <see cref="m_Pace"/> for <see cref="SlowDown"/>.
         /// </summary>
-        private void MeasureTrain(Entity train, out float length, out float lookAhead)
+        private void MeasureTrain(Entity train, float speed, out float length, out float lookAhead)
         {
             TrainMeasure measure = TrainMeasure.Of(EntityManager, train);
             length = measure.Length;
@@ -619,9 +611,8 @@ namespace SmartTrains.Dispatch
                 lookAhead = 1000f;
                 return;
             }
-            float speed = measure.MaxSpeed;
-            lookAhead = 0.5f * speed * speed / measure.Braking + 4f * speed + kLookAheadMargin;
-            m_Pace[train] = new TrainData { m_MaxSpeed = speed, m_Acceleration = measure.Acceleration, m_Braking = measure.Braking };
+            lookAhead = LookAhead.For(speed, measure.MaxSpeed, measure.Acceleration, measure.Braking);
+            m_Pace[train] = new TrainData { m_MaxSpeed = measure.MaxSpeed, m_Acceleration = measure.Acceleration, m_Braking = measure.Braking };
         }
 
         // ---- Holding ----
