@@ -66,6 +66,16 @@ $signal: #c9a8ff;
   white-space: nowrap;
 }
 
+// Below the dispatcher bar, quieter: it is for measuring the mod.
+.metrics {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  margin: 0rem 12rem 2rem 12rem;
+  padding: 0rem 4rem 0rem 10rem;
+  opacity: 0.7;
+}
+
 .filters {
   display: flex;
   flex-direction: row;

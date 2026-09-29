@@ -1,0 +1,65 @@
+<Publish>
+	<!--Id must be set in order to update existed mod. it is not required for publishing mod for the first time-->
+	<ModId Value="" />
+	<!--Name of the mod to display to players-->
+	<DisplayName Value="Smart Trains" />
+	<!--Short description of the mod-->
+	<ShortDescription Value="A central dispatcher for your railway: trains wait at safe places instead of blocking junctions, and a panel shows every train and why it stands." />
+	<!--Long description of the mod. Single line or multi line. Supports minimal markdown subset-->
+	<LongDescription>
+Trains in Cities: Skylines II each find their own way, and on a busy network they get in each other's way. A train stops in a junction, another waits for it on the only track out, and in the end the game removes both, passengers and all.
+
+Smart Trains adds what real railways use for this: a central dispatcher, and a panel that shows what every train is doing.
+
+**The dispatcher**
+
+- Lets a train go only when the track up to the next safe place to wait is free: a stretch it fits in completely, clear of junctions, and not a single track that trains from the other side need.
+- Gives out track in order of priority. Passenger trains come before freight trains, and a train's priority rises the longer it waits.
+- Keeps a train that has waited long from being passed again and again by trains with shorter ways.
+- Lets trains roll on slowly instead of stopping, where it can tell when the way ahead frees.
+- Lets one train go when trains wait for each other in a circle.
+
+The dispatcher starts switched off. Open the panel and switch it on. You can switch it off again at any time, and trains then run as they do without the mod.
+
+**The train panel**
+
+The train button at the top left opens a list of all trains: whether each one runs or stands and why, the passengers or cargo on board, and where it comes from and goes to. Click a train to follow it. A second list shows the trains the game removed, and why.
+
+**What to expect**
+
+In the city the mod was developed in, the game removed more than 25 deadlocked trains in seven in-game hours without the dispatcher. With it, such removals were about twenty times rarer. In return, trains wait at signals more than without it: there, they covered about a sixth less distance per hour. Making the dispatcher faster without losing that safety is the next step.
+
+**Good to know**
+
+- Works with existing saves. Holds are lifted before the game saves, so a save never depends on the mod.
+- Only trains. Trams and subways are left alone.
+- Lines still choose their own platforms and tracks; the dispatcher only decides when a train may go. Choosing platforms and passing loops is planned.
+- For measuring the mod, the panel can record how trains run. This is off unless you switch it on.
+
+Source code and issues: https://github.com/hilman2/SmartTrains
+	</LongDescription>
+	<!--Thumbnail-->
+	<Thumbnail Value="Properties/Thumbnail.png" />
+	<!--Screenshot, can be set multiple times-->
+	<Screenshot Value="Properties/Screenshots/01.png" />
+	<Screenshot Value="Properties/Screenshots/02.png" />
+	<Screenshot Value="Properties/Screenshots/03.png" />
+	<!--Tag, can be set multiple times-->
+	<Tag Value="Code Mod" />
+	<!--Link to the forum post where the mod can be discussed-->
+	<ForumLink Value="" />
+	<!--Version of the mod-->
+	<ModVersion Value="0.1.0" />
+	<!--Recommended version of the base game to use the mod-->
+	<GameVersion Value="1.6.*" />
+	<!--Dependency for the mod, can be set multiple times-->
+	<Dependency Id="" />
+	<!--Required DLC, can be set multiple times. Supported values are "Landmark Buildings", "San Fransisco Set", "Beach Properties", "Urban Promenades", "Modern Architecture"-->
+	<RequiredDLC Value="" />
+	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
+	<ChangeLog Value="First release." />
+	<!--External link, can be set multiple times. supported types are "discord", "github", "youtube", "twitch", "x", "paypal", "patreon", "buymeacoffee", "kofi", "crowdin", "gitlab", "gofundme"-->
+	<ExternalLink Type="github" Url="https://github.com/hilman2/SmartTrains" />
+	<!--Supported values Public, Private, Unlisted. Private first, to check the page; then Public through UpdatePublishedConfiguration-->
+	<AccessLevel Value="Private" />
+</Publish>

@@ -4,6 +4,9 @@ The mod records how trains run, so that versions of the mod, and the
 dispatcher switched on and off, can be compared by numbers. `report.py` reads
 the records and prints the comparison, and where trains stood longest.
 
+Recording is off by default; the Metrics switch in the train panel turns
+it on, and it stays on for later sessions until switched off.
+
 The records go to `ModsData/SmartTrains/Metrics` in the game's user folder, on
 Windows `%USERPROFILE%\AppData\LocalLow\Colossal Order\Cities Skylines II\ModsData\SmartTrains\Metrics`.
 Each session gets a folder of its own, named after the time it began. A

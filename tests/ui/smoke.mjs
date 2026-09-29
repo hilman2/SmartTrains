@@ -129,7 +129,7 @@ const rows = [
   { ...base, index: 25, moving: true, reason: 0, dispatch: { rank: 20, holding: false, reason: 0, waitingFor: null, advice: 6.5 } },
   { ...base, index: 23, dispatch: null },
 ];
-const trains = { total: rows.length, moving: 5, standing: 5, atPlatform: 3, deadlocked: 1, dispatcherActive: false, holding: 2, rows };
+const trains = { total: rows.length, moving: 5, standing: 5, atPlatform: 3, deadlocked: 1, dispatcherActive: false, holding: 2, metricsActive: true, rows };
 const despawn = {
   id: 1, time: "09:39", cause: 0, train: 124360, line: "Güterzugroute 5", cargo: true, through: false, returning: false,
   minutes: 35.4, passengers: 0, loadPercent: 23, resource: "Timber", backToStart: true,

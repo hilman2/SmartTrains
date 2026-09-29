@@ -72,6 +72,17 @@ namespace SmartTrains.UI
             AddBinding(new TriggerBinding<int, int>(kGroup, "diagnose", OnDiagnose));
             AddBinding(new TriggerBinding<int>(kGroup, "showDespawn", OnShowDespawn));
             AddBinding(new TriggerBinding(kGroup, "toggleDispatcher", OnToggleDispatcher));
+            AddBinding(new TriggerBinding(kGroup, "toggleMetrics", OnToggleMetrics));
+        }
+
+        private void OnToggleMetrics()
+        {
+            if (Mod.Settings == null)
+                return;
+            Mod.Settings.RecordMetrics = !Mod.Settings.RecordMetrics;
+            Mod.Settings.ApplyAndSave();
+            Mod.Log.Info(Mod.Settings.RecordMetrics ? "Metrics recording switched on." : "Metrics recording switched off.");
+            m_NextRead = default;
         }
 
         private Dispatch.DispatchSystem DispatchSystem => m_Dispatch ?? (m_Dispatch = World.GetExistingSystemManaged<Dispatch.DispatchSystem>());
@@ -239,6 +250,8 @@ namespace SmartTrains.UI
             writer.Write(DispatchSystem != null && DispatchSystem.Active);
             writer.PropertyName("holding");
             writer.Write(holding);
+            writer.PropertyName("metricsActive");
+            writer.Write(Mod.Settings != null && Mod.Settings.RecordMetrics);
             int count = Math.Min(m_Rows.Count, kMaxRows);
             writer.PropertyName("rows");
             writer.ArrayBegin((uint)count);

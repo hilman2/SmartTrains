@@ -23,9 +23,17 @@ namespace SmartTrains
         /// </summary>
         public bool DispatcherActive { get; set; }
 
+        /// <summary>
+        /// Whether metrics are recorded, see MetricsSystem. Off by default:
+        /// they are for measuring the mod, and a long session writes some
+        /// megabytes.
+        /// </summary>
+        public bool RecordMetrics { get; set; }
+
         public override void SetDefaults()
         {
             DispatcherActive = false;
+            RecordMetrics = false;
         }
     }
 }

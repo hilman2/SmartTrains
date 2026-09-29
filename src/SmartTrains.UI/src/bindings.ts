@@ -90,11 +90,15 @@ export interface Trains {
   dispatcherActive: boolean;
   /** Trains the dispatcher holds, or would hold when switched off. */
   holding: number;
+  /** Whether metrics are recorded, to ModsData/SmartTrains/Metrics. */
+  metricsActive: boolean;
   /** Deadlocked first, then standing longest first, then at a platform, then moving. */
   rows: TrainRow[];
 }
 
-const emptyTrains: Trains = { total: 0, moving: 0, standing: 0, atPlatform: 0, deadlocked: 0, dispatcherActive: false, holding: 0, rows: [] };
+const emptyTrains: Trains = {
+  total: 0, moving: 0, standing: 0, atPlatform: 0, deadlocked: 0, dispatcherActive: false, holding: 0, metricsActive: false, rows: [],
+};
 
 export const trains$ = bindValue<Trains>(group, "trains", emptyTrains);
 
@@ -174,4 +178,6 @@ export const actions = {
   showDespawn: (id: number) => trigger(group, "showDespawn", id),
   /** Switches between holding trains and only planning. */
   toggleDispatcher: () => trigger(group, "toggleDispatcher"),
+  /** Switches recording metrics on or off. */
+  toggleMetrics: () => trigger(group, "toggleMetrics"),
 };

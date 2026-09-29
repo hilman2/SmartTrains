@@ -63,6 +63,7 @@ export const TrainsPanel = () => {
     >
       <SummaryLine trains={trains} t={t} />
       <DispatcherBar trains={trains} t={t} />
+      <MetricsBar trains={trains} t={t} />
       <div className={styles.filters}>
         {filters.map((f) => (
           <Button
@@ -123,6 +124,19 @@ const DispatcherBar = ({ trains, t }: { trains: Trains; t: Translate }) => {
     </div>
   );
 };
+
+const MetricsBar = ({ trains, t }: { trains: Trains; t: Translate }) => (
+  <div className={styles.metrics}>
+    <Hint text={t("Metrics.Hint", "Records how trains run, for measuring the mod. The files go to ModsData/SmartTrains/Metrics in the game's user folder; a long session writes some megabytes.")}>
+      <div className={styles.dispatcherText}>
+        {`${t("Metrics.Label", "Metrics")}: ${trains.metricsActive ? t("Metrics.On", "recording") : t("Dispatcher.Off", "off")}`}
+      </div>
+    </Hint>
+    <Button variant="flat" className={styles.dispatcherButton} onSelect={actions.toggleMetrics}>
+      {trains.metricsActive ? t("Metrics.Stop", "Stop") : t("Metrics.Start", "Record")}
+    </Button>
+  </div>
+);
 
 // ---- Texts shared by live trains and removed ones ----
 

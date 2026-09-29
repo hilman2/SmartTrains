@@ -207,9 +207,20 @@ namespace SmartTrains.Metrics
 
         // ---- Session ----
 
-        /// <summary>Opens the session's files on first use after a load; false if nothing is to be recorded.</summary>
+        /// <summary>
+        /// Opens the session's files on first use after a load; false if
+        /// nothing is to be recorded. Recording is switched on in the panel
+        /// (Setting.RecordMetrics); switched off, the session ends, and
+        /// switched on again, a new one begins.
+        /// </summary>
         private bool EnsureSession()
         {
+            if (Mod.Settings == null || !Mod.Settings.RecordMetrics)
+            {
+                if (m_Log != null)
+                    EndSession();
+                return false;
+            }
             if (m_Log != null)
                 return true;
             if (!m_InGame || m_Failed)
